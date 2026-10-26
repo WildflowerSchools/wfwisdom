@@ -29,7 +29,7 @@
     "pdf-parse": "^1.1.1",
     "pino": "^9.7.0",
     "pino-http": "^10.5.0",
-    "sanitize-html": "^2.17.7",
+    "sanitize-html": "^2.18.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
