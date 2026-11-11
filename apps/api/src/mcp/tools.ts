@@ -5,6 +5,7 @@ import { z } from "zod";
 import { and, asc, auditLog, chatTurnNotes, chatTurns, desc, eq, getDb, gt, inArray, itemMeta, items, jobs, materialTypes, mcpCalls, placements, searchLog, signals, sql, subjobs, typeResources, users } from "@wfw/db";
 import { DOC_TYPES, STAGES, type ItemSummary, type SessionUser, type StageKey } from "@wfw/shared";
 import { env } from "../env.js";
+import { dropDuplicateByline, mergeAdjacentLists, stripContentTokens } from "../lib/html.js";
 import { logger } from "../logger.js";
 import { approveContribution, createNativeItem, declineContribution, setPlacements, toGoogleDoc } from "../routes/native.js";
 import { CurationError, applyMetaPatch, moveItem } from "../services/curation.js";
@@ -57,6 +58,32 @@ const brief = (s: ItemSummary) => ({
 });
 const isStage = (s: unknown): s is StageKey => typeof s === "string" && STAGES.some((x) => x.key === s);
 const TYPE_KEYS = DOC_TYPES.map((t) => t.key) as [string, ...string[]];
+
+/**
+ * A resource's formatted body, for a reader that is not the web app.
+ *
+ * The stored HTML is written for the site: a link to another Connected post is `/c/post/123`, which the
+ * site resolves as it navigates, and files are `/api/files/…`. Outside the site those go nowhere. So
+ * links to other resources become `/item/<id>` on the site's own address, which a reader can recognize
+ * and open in place, and everything else that was relative becomes absolute. A reference to something
+ * this person cannot see is pointed back at Connected, where it came from, not at a Wisdom page that
+ * would refuse them.
+ */
+async function readerHtml(html: string, author: string | null, staff: boolean): Promise<string> {
+  let out = dropDuplicateByline(mergeAdjacentLists(stripContentTokens(html)), author);
+  const refs = [...new Set([...out.matchAll(/href="\/c\/(post|series|question)\/(\d+)"/g)].map((m) => `${m[1]}/${m[2]}`))].slice(0, 60);
+  const found = new Map<string, string>();
+  await Promise.all(refs.map(async (ref) => {
+    const [kind, n] = ref.split("/") as [string, string];
+    const [r] = await getDb().select({ id: items.id }).from(items).leftJoin(itemMeta, eq(itemMeta.itemId, items.id)).where(and(sql`(${items.sourceKind} = ${kind} and ${items.sourceId} = ${Number(n)}) or ${items.importedFrom} @> ${JSON.stringify({ kind, sourceId: Number(n) })}::jsonb`, visibleWhere(staff))).limit(1);
+    if (r) found.set(ref, r.id);
+  }));
+  out = out.replace(/href="\/c\/(post|series|question)\/(\d+)"/g, (_m, kind: string, n: string) => {
+    const id = found.get(`${kind}/${n}`);
+    return `href="${id ? link(id) : `https://connected.wildflowerschools.org/${kind === "post" ? "posts" : kind === "series" ? "series" : "questions"}/${n}`}"`;
+  });
+  return out.replace(/\b(href|src)="\/(?!\/)/g, `$1="${base()}/`);
+}
 
 type Outcome = { data: Record<string, unknown>; detail?: Record<string, unknown> };
 class ToolError extends Error {}
@@ -119,16 +146,17 @@ export function buildServer(user: SessionUser): McpServer {
 
   server.registerTool("get_resource", {
     title: "Read a resource",
-    description: "Read one resource in full: its text, files and links, and where it sits on the map. Long resources come in parts; pass offset to read on.",
+    description: "Read one resource in full: its text, files and links, and where it sits on the map. Long resources come in parts; pass offset to read on. In the formatted body, a link to another resource ends in /item/ and that resource's id, which can be passed back to this tool.",
     inputSchema: {
       id: z.string().uuid().describe("The resource id from search_wisdom, browse_map or whats_new."),
       offset: z.number().int().min(0).optional().describe("Character position to start reading from. Default 0."),
       max_chars: z.number().int().min(1000).max(60_000).optional().describe("How much text to return. Default 20000."),
+      format: z.enum(["text", "html"]).optional().describe("Leave unset when reading in a conversation. html adds the formatted body, with its headings and links, for a page that displays the resource."),
     },
     annotations: READ,
   }, run("get_resource", async (a) => {
     const db = getDb();
-    const [r] = await db.select({ ...itemSelect, authorName: sql<string | null>`coalesce(${itemMeta.displayAuthor}, ${items.authorName})`, publishedAt: sql<Date | null>`coalesce(${itemMeta.displayPublishedAt}, ${items.publishedAt})`, bodyText: items.bodyText, attachmentsFull: items.attachments, linkedDocs: items.linkedDocs, sourceId: items.sourceId, status: items.status, staffNote: itemMeta.staffNote, stages: itemMeta.stages, pinnedStage: itemMeta.pinnedStage, displayTitle: itemMeta.displayTitle, displayDescription: itemMeta.displayDescription })
+    const [r] = await db.select({ ...itemSelect, authorName: sql<string | null>`coalesce(${itemMeta.displayAuthor}, ${items.authorName})`, publishedAt: sql<Date | null>`coalesce(${itemMeta.displayPublishedAt}, ${items.publishedAt})`, bodyText: items.bodyText, bodyHtml: items.bodyHtml, attachmentsFull: items.attachments, linkedDocs: items.linkedDocs, sourceId: items.sourceId, status: items.status, staffNote: itemMeta.staffNote, stages: itemMeta.stages, pinnedStage: itemMeta.pinnedStage, displayTitle: itemMeta.displayTitle, displayDescription: itemMeta.displayDescription })
       .from(items).leftJoin(itemMeta, eq(itemMeta.itemId, items.id)).where(and(eq(items.id, a.id), visibleWhere(staff)));
     if (!r) throw new ToolError("That resource is not in the library, or is not available to this person.");
     const pl = await db.select({ subjob_key: subjobs.key, subjob: subjobs.name, job: jobs.name, primary: placements.isPrimary }).from(placements).innerJoin(subjobs, eq(subjobs.id, placements.subjobId)).innerJoin(jobs, eq(jobs.id, subjobs.jobId)).where(eq(placements.itemId, r.id)).orderBy(desc(placements.isPrimary));
@@ -150,6 +178,7 @@ export function buildServer(user: SessionUser): McpServer {
     const s = toSummary(r as ItemRow);
     return { detail: { id: r.id }, data: {
       ...brief(s), author: r.authorName, published: r.publishedAt ? new Date(r.publishedAt).toISOString().slice(0, 10) : null, original: r.url,
+      ...(a.format === "html" && r.bodyHtml ? { body_html: (await readerHtml(r.bodyHtml, r.authorName, staff)).slice(0, 400_000) } : {}),
       text: part, text_from: offset, text_total_chars: text.length, ...(offset + part.length < text.length ? { next_offset: offset + part.length } : {}),
       files, linked_documents: r.linkedDocs.map((d) => ({ url: d.url, kind: d.kind, readable: d.status === "ok" })), ...(contains.length ? { contains } : {}),
       on_the_map: pl, helpful_votes: { yes: votes?.yes ?? 0, no: votes?.no ?? 0 },

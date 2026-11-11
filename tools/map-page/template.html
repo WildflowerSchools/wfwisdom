@@ -97,6 +97,20 @@ main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr
 .lede { margin: 0; font-size: 1rem; }
 .prose { display: flex; flex-direction: column; gap: 10px; max-width: 68ch; }
 .prose p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rich { gap: 12px; }
+.rich p { white-space: normal; }
+.rich a { color: var(--accent); font-weight: 600; overflow-wrap: anywhere; }
+.rich h3, .rich h4, .rich h5 { font-family: var(--display); font-weight: 500; color: var(--accent); margin: 8px 0 0; text-wrap: balance; }
+.rich h3 { font-size: 1.25rem; } .rich h4 { font-size: 1.1rem; } .rich h5 { font-size: 1rem; }
+.rich ul, .rich ol { margin: 0; padding-left: 1.5em; display: flex; flex-direction: column; gap: 4px; }
+.rich blockquote { margin: 0; padding: 2px 0 2px 14px; border-left: 3px solid var(--line); color: var(--muted); }
+.rich pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--accent-pale); border-radius: 8px; padding: 10px; font-size: .88rem; }
+.rich hr { border: 0; border-top: 1px solid var(--line); width: 100%; margin: 4px 0; }
+.rich .embedlink { display: block; }
+.tablewrap { overflow-x: auto; }
+.rich table { border-collapse: collapse; font-size: .9rem; }
+.rich td, .rich th { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+.rich th { background: var(--accent-pale); }
 .parts { margin: 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 4px; }
 .part { border: 0; background: transparent; color: var(--accent); font-weight: 600; text-align: left; padding: 3px 0; cursor: pointer; }
 .part:hover { text-decoration: underline; }
@@ -288,6 +302,59 @@ function splitText(text) {
   return { body: parts[0].split("\n").filter(l => !/^Includes: /.test(l)).join("\n").trim(), files };
 }
 function paragraphs(text) { const box = el("div", "prose"); text.split(/\n{2,}/).map(s => s.trim()).filter(Boolean).forEach(s => box.append(el("p", null, s))); return box; }
+/* A resource's formatted body arrives as HTML that the site has already cleaned. It is still rebuilt
+   here element by element, keeping only what a reader needs, so nothing in it can run or load: a page
+   like this one may not load remote images or embed other sites, so those become links. */
+const ITEM_LINK = /\/item\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?(?:[?#].*)?$/;
+const KEEP = { P: "p", BR: "br", STRONG: "strong", B: "strong", EM: "em", I: "em", U: "u", S: "s", UL: "ul", OL: "ol", LI: "li", H1: "h3", H2: "h3", H3: "h4", H4: "h5", H5: "h5", H6: "h5", BLOCKQUOTE: "blockquote", PRE: "pre", HR: "hr", TABLE: "table", THEAD: "thead", TBODY: "tbody", TR: "tr", TD: "td", TH: "th", SUB: "sub", SUP: "sup", FIGCAPTION: "p" };
+function safeUrl(u) { try { const x = new URL(u); return x.protocol === "https:" || x.protocol === "http:" || x.protocol === "mailto:" ? x.href : null; } catch (e) { return null; } }
+function embedLink(tag, src, alt) {
+  let label = tag === "IMG" ? "Image" + (alt ? ": " + alt : "") : tag === "AUDIO" ? "Listen to the audio" : "Watch the video", href = src;
+  if (tag === "IFRAME") {
+    const yt = /youtube(?:-nocookie)?\.com\/embed\/([\w-]+)/.exec(src);
+    if (yt) href = "https://www.youtube.com/watch?v=" + yt[1];
+    else if (/docs\.google\.com\/(document|spreadsheets|presentation)\/d\//.test(src)) { label = /spreadsheets/.test(src) ? "Open the Google Sheet" : /presentation/.test(src) ? "Open the Google Slides" : "Open the Google Doc"; href = src.replace(/\/(preview|embed)(\?.*)?$/, "/edit"); }
+    else if (/drive\.google\.com/.test(src)) label = "Open the file in Google Drive";
+  }
+  const s = el("span", "embedlink"); s.append(outLink(label, href)); return s;
+}
+function copyInto(node, into) {
+  node.childNodes.forEach(n => {
+    if (n.nodeType === 3) { into.append(n.textContent); return; }
+    if (n.nodeType !== 1) return;
+    const tag = n.tagName;
+    if (tag === "SCRIPT" || tag === "STYLE" || tag === "SOURCE") return;
+    if (tag === "A") {
+      const href = safeUrl(n.getAttribute("href") || "");
+      if (!href) { copyInto(n, into); return; }
+      const a = el("a"), m = ITEM_LINK.exec(href);
+      // A link to another resource in the library opens it here, in the reader.
+      if (m) { a.href = "#r-" + m[1]; a.onclick = e => { e.preventDefault(); openResource(m[1], null); }; }
+      else { a.href = href; a.target = "_blank"; a.rel = "noopener"; }
+      copyInto(n, a); if (!a.textContent.trim()) a.textContent = href;
+      into.append(a); return;
+    }
+    if (tag === "IMG" || tag === "IFRAME" || tag === "VIDEO" || tag === "AUDIO" || tag === "EMBED") {
+      const src = safeUrl(n.getAttribute("src") || (n.querySelector("source") || n).getAttribute("src") || "");
+      if (src) into.append(embedLink(tag, src, n.getAttribute("alt")));
+      return;
+    }
+    const to = KEEP[tag];
+    if (!to) { copyInto(n, into); return; }
+    const e = el(to);
+    if (to === "ol" && /^\d+$/.test(n.getAttribute("start") || "")) e.setAttribute("start", n.getAttribute("start"));
+    if (to === "td" || to === "th") ["colspan", "rowspan"].forEach(k => { if (/^\d+$/.test(n.getAttribute(k) || "")) e.setAttribute(k, n.getAttribute(k)); });
+    if (to === "table") { const wrap = el("div", "tablewrap"); wrap.append(e); into.append(wrap); } else into.append(e);
+    copyInto(n, e);
+  });
+}
+function richBody(html) {
+  const box = el("div", "prose rich");
+  copyInto(new DOMParser().parseFromString(html, "text/html").body, box);
+  box.querySelectorAll("p, li, h3, h4, h5").forEach(x => { if (!x.textContent.trim() && !x.querySelector("a, br + *")) x.remove(); });
+  return box.textContent.trim() ? box : null;
+}
+
 function openResource(id, series) {
   if (series) state.series = series; else if (!state.series || !state.series.parts.some(p => p.id === id)) state.series = null;
   state.read = id;
@@ -308,7 +375,9 @@ function outLink(label, href) { const a = el("a", null, label); a.href = href; a
 async function renderReader(mine) {
   const pane = $("pane"); pane.textContent = "";
   pane.append(el("p", "none", "Opening."));
-  const r = await call("get_resource", { id: state.read, max_chars: 30000 }); if (mine !== seq) return;
+  // A site that has not yet been updated to offer the formatted body refuses the argument; plain text still reads.
+  let r; try { r = await call("get_resource", { id: state.read, max_chars: 30000, format: "html" }); }
+  catch (e) { if (!(e && e.code === "tool_error" && /format|argument|invalid/i.test(e.message || ""))) throw e; r = await call("get_resource", { id: state.read, max_chars: 30000 }); } if (mine !== seq) return;
   pane.textContent = "";
   const inSeries = state.series && state.read !== state.series.id ? state.series : null;
   pane.append(button("back", inSeries ? "Back to " + inSeries.title : "Back", closeReader));
@@ -333,8 +402,11 @@ async function renderReader(mine) {
     pane.append(ol);
   }
   const { body, files } = splitText(r.text || "");
-  if (body) pane.append(paragraphs(body));
-  if (r.next_offset) pane.append(el("p", "more", "This is the first part of a long resource. Open it on the site for the rest."));
+  // The formatted body is whole and keeps its headings and links. The plain text is what there is for
+  // a resource that has none, and that is the only case where it can be cut short.
+  const rich = r.body_html ? richBody(r.body_html) : null;
+  if (rich) pane.append(rich); else if (body) pane.append(paragraphs(body));
+  if (!rich && r.next_offset) pane.append(el("p", "more", "This is the first part of a long resource. Open it on the site for the rest."));
 
   const links = [];
   (r.linked_documents || []).forEach(d => links.push(outLink(d.kind === "spreadsheets" ? "Open the Google Sheet" : d.kind === "presentation" ? "Open the Google Slides" : "Open the Google Doc", d.url)));
@@ -349,7 +421,7 @@ async function renderReader(mine) {
     d.append(el("p", "more", "Read automatically from the file, so spacing and layout may be rough. Ask Claude to summarize it, or open the file."));
     d.append(paragraphs(f.text)); pane.append(d);
   });
-  if (!body && !parts.length && !links.length && !files.length) pane.append(el("p", "none", "There is nothing to read here. Open it on the site."));
+  if (!rich && !body && !parts.length && !links.length && !files.length) pane.append(el("p", "none", "There is nothing to read here. Open it on the site."));
 
   if (inSeries) {
     const n = inSeries.parts.findIndex(p => p.id === r.id), nav = el("div", "partnav");

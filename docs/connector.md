@@ -107,9 +107,16 @@ a snapshot built from
 
 Live, a resource's title opens it in a reader on the same page, so a person can read a post or step
 through a series without leaving Claude. A resource has its own address there, `#r-<id>`. What the reader
-cannot do is show a PDF, a Google Doc or a video in place: a published page may not embed other sites, so
-those are links that open outside Claude. It shows the post's own text, and folds away the text read out
-of attached files, which is often rough.
+cannot do is show a PDF, a Google Doc, a video or an image in place: a published page may not embed other
+sites or load remote images, so those are links that open outside Claude. It shows the post's own body
+with its headings, lists and links, and folds away the text read out of attached files, which is often
+rough.
+
+The body comes from `get_resource` with `format: "html"`. The stored HTML is written for the site, so
+the tool rewrites it for a reader elsewhere: a link to another resource becomes `/item/<id>` on the
+site's address, which the reader recognizes and opens in place, and other relative addresses become
+absolute. The page rebuilds that HTML element by element and keeps only formatting and links, so
+nothing in it can run.
 
 ## Not built
 
