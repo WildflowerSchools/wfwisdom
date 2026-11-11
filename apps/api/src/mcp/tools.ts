@@ -6,7 +6,7 @@ import { and, asc, auditLog, chatTurnNotes, chatTurns, desc, eq, getDb, gt, inAr
 import { DOC_TYPES, STAGES, type ItemSummary, type SessionUser, type StageKey } from "@wfw/shared";
 import { env } from "../env.js";
 import { logger } from "../logger.js";
-import { createNativeItem } from "../routes/native.js";
+import { approveContribution, createNativeItem, declineContribution, setPlacements, toGoogleDoc } from "../routes/native.js";
 import { CurationError, applyMetaPatch, moveItem } from "../services/curation.js";
 import { RESOURCE_LIST, filterWhere, itemSelect, itemsByIds, itemsForSubjob, mostUsed, postsBySourceId, startHere, subjobItemCounts, toSummary, visibleWhere, type ItemRow } from "../services/items.js";
 import { googleKindOfMime, googleUrl, isGoogleAppsMime } from "../services/native.js";
@@ -17,6 +17,7 @@ import { retrievePassages, search } from "../services/search.js";
 import { recordSignal } from "../services/signals.js";
 import { getSettings } from "../settings.js";
 import { connectedUserCount } from "./oauth.js";
+import { createUploadLink } from "./upload.js";
 
 /**
  * The tools Claude is given when someone connects Wildflower Wisdom.
@@ -42,7 +43,7 @@ Answering a question:
 - If the library does not cover the question, say so plainly and offer to send it to Foundation staff.
 - When you have answered, or found that you cannot, call log_question once with whether the library answered it and which resources you cited.
 
-Other things people do here: browse the library by the job in front of them (browse_map), see what is new (whats_new), get a draft reviewed against Wildflower's guidance for that kind of document (list_review_types, then get_review_guide), share a resource of their own (share_resource), and say whether a resource helped (rate_resource).
+Other things people do here: browse the library by the job in front of them (browse_map), see what is new (whats_new), get a draft reviewed against Wildflower's guidance for that kind of document (list_review_types, then get_review_guide), add a resource of their own (create_resource for text written here, share_resource for a Google file, request_upload_link for a file on their device), and say whether a resource helped (rate_resource).
 
 Tools whose names start with staff_ appear only for Foundation staff. They change what teacher leaders see: say what you are about to change and get a yes before calling one.`;
 
@@ -94,13 +95,15 @@ export function buildServer(user: SessionUser): McpServer {
       search_words: z.string().trim().max(300).optional().describe("Search terms to use instead of the question, when shorter or different words will match better."),
       types: z.array(z.enum(TYPE_KEYS)).max(13).optional().describe("Only return these kinds of resource."),
       limit: z.number().int().min(1).max(15).optional().describe("How many resources to return. Default 8."),
+      job_key: z.string().max(80).optional().describe("A job key from browse_map, when the question clearly belongs to one job. Resources in that job rank a little higher."),
       source: z.enum(["chat", "map"]).optional().describe("Leave unset. The map page sets this for its filter box."),
     },
     annotations: READ,
   }, run("search_wisdom", async (a) => {
     const q = (a.search_words || a.question).slice(0, 300);
     const want = a.limit ?? 8;
-    const r = await search(q, { staff, limit: a.types?.length ? 30 : want, userId: user.id, ...reader });
+    // Claude chose these words, so the model that would rewrite them for the web app's search box is skipped.
+    const r = await search(q, { staff, limit: a.types?.length ? 30 : want, userId: user.id, ...reader, rewrite: false, jobKey: a.job_key ?? null });
     let results = r.results;
     if (a.types?.length) { const ct = new Set(a.types); results = results.filter((it) => ct.has(typeOf(it))).slice(0, want); }
     // Passages cost an embedding call, so they follow the same switch staff use to stop model spend.
@@ -288,23 +291,89 @@ export function buildServer(user: SessionUser): McpServer {
     return { data: { recorded: true }, detail: { id: a.id, helpful: a.helpful } };
   }));
 
+  // ---- adding to the library
+
+  const STAGE_KEYS = ["discovery", "visioning", "planning", "startup", "open"] as const;
+  const placing = {
+    subjob_keys: z.array(z.string().max(120)).max(6).optional().describe("Staff only. Sub-job keys from browse_map to place it under; the first is its main place."),
+    stages: z.array(z.enum(STAGE_KEYS)).max(5).optional().describe("Staff only. The stages of the School Startup Journey it is for."),
+  };
+  /** Checks the keys exist before anything is created, so a typo does not leave a published resource nowhere on the map. */
+  const checkSubjobs = async (keys: string[] | undefined) => {
+    if (!keys?.length) return;
+    const found = new Set((await getDb().select({ key: subjobs.key }).from(subjobs).where(inArray(subjobs.key, keys))).map((r) => r.key));
+    const missing = keys.filter((k) => !found.has(k));
+    if (missing.length) throw new ToolError(`There is no sub-job with the key ${missing.join(", ")}. Call browse_map to see the keys.`);
+  };
+  const afterCreate = async (id: string, a: { subjob_keys?: string[]; stages?: string[] }) => {
+    if (staff && (a.subjob_keys?.length || a.stages?.length)) await setPlacements(id, a.subjob_keys ?? [], a.stages ?? []);
+    const placed = staff && !!a.subjob_keys?.length;
+    return { id, status: staff ? "published" : "pending", ...(staff ? { link: link(id), next: placed ? "It is published and on the map." : "It is published but not on the map. Place it with staff_move_resource." } : { next: "Foundation staff will review it before it appears in the library. my_contributions shows where it stands." }) };
+  };
+
+  server.registerTool("create_resource", {
+    title: "Add a resource written here",
+    description: "Add a new resource to the library from text written in this conversation: a guide, template, example, policy or checklist. Send the finished text as Markdown. A teacher leader's goes to Foundation staff for review; a staff member's is published straight away. Show the person the final title and text and get a yes before calling.",
+    inputSchema: {
+      title: z.string().trim().min(3).max(200),
+      body_markdown: z.string().trim().min(50).max(200_000).describe("The whole resource as Markdown: headings, lists, links, tables."),
+      description: z.string().trim().max(600).optional().describe("One or two sentences on what it is and when to use it. Shown on the card."),
+      note: z.string().trim().max(4000).optional().describe("A note to the staff member who reviews it: where it came from, what it replaces."),
+      review_type_key: z.string().max(80).optional().describe("The kind of document, as a key from list_review_types, when one fits."),
+      ...placing,
+    },
+    annotations: WRITE,
+  }, run("create_resource", async (a) => {
+    if (staff) await checkSubjobs(a.subjob_keys);
+    let created: { id: string };
+    try { created = await createNativeItem({ kind: "text", title: a.title, description: a.description ?? null, bodyMarkdown: a.body_markdown, materialTypeKey: a.review_type_key ?? null, note: a.note ?? null, status: staff ? "published" : "pending", authorUserId: user.id, by: actor }); }
+    catch (e) { throw new ToolError((e as Error).message); }
+    return { detail: { id: created.id, chars: a.body_markdown.length }, data: await afterCreate(created.id, a) };
+  }));
+
   server.registerTool("share_resource", {
-    title: "Share a resource with the network",
-    description: "Offer a Google Doc, Sheet, Slides or Drive file to the library. A teacher leader's contribution goes to Foundation staff to review before anyone else sees it; a staff member's is published straight away. The file must be shared so that Wisdom can read it. Confirm the title and link with the person first.",
+    title: "Add a Google file",
+    description: "Add a Google Doc, Sheet, Slides or Drive file to the library by its link. A teacher leader's goes to Foundation staff for review; a staff member's is published straight away. The file must be shared so that Wisdom can read it. Confirm the title and link with the person first.",
     inputSchema: {
       url: z.string().url().max(2000).describe("The Google Docs, Sheets, Slides or Drive link."),
       title: z.string().trim().max(200).optional().describe("Title to show. Defaults to the file's own name."),
       description: z.string().trim().max(600).optional().describe("One or two sentences on what it is and when it is useful."),
       note: z.string().trim().max(4000).optional().describe("A note to the staff member who reviews it."),
       review_type_key: z.string().max(80).optional().describe("The kind of document, as a key from list_review_types, when one fits."),
+      ...placing,
     },
     annotations: { ...WRITE, openWorldHint: true },
   }, run("share_resource", async (a) => {
+    if (staff) await checkSubjobs(a.subjob_keys);
     let created: { id: string };
     // createNativeItem explains itself in words meant for the person (a private file, a link that is not Google's).
     try { created = await createNativeItem({ kind: "google", title: a.title, description: a.description ?? null, url: a.url, materialTypeKey: a.review_type_key ?? null, note: a.note ?? null, status: staff ? "published" : "pending", authorUserId: user.id, by: actor }); }
     catch (e) { throw new ToolError((e as Error).message); }
-    return { detail: { id: created.id }, data: { id: created.id, status: staff ? "published" : "pending", ...(staff ? { link: link(created.id), next: "It is published but not yet on the map. Place it with staff_move_resource." } : { next: "Foundation staff will review it before it appears in the library." }) } };
+    return { detail: { id: created.id }, data: await afterCreate(created.id, a) };
+  }));
+
+  server.registerTool("request_upload_link", {
+    title: "Get a link for sending a file",
+    description: "For a file on the person's own device, such as a PDF: returns a one-time link they open in their browser to send it. A file cannot be sent through this conversation. Give them the link as it is. It takes one file and lasts 30 minutes. Afterwards, my_contributions shows whether it arrived.",
+    inputSchema: {
+      title: z.string().trim().max(200).optional().describe("Title to show. Defaults to the file's name."),
+      description: z.string().trim().max(600).optional(),
+      note: z.string().trim().max(4000).optional().describe("A note to the staff member who reviews it."),
+      review_type_key: z.string().max(80).optional(),
+    },
+    annotations: WRITE,
+  }, run("request_upload_link", async (a) => {
+    const r = await createUploadLink(user.id, base(), { ...(a.title ? { title: a.title } : {}), ...(a.description ? { description: a.description } : {}), ...(a.note ? { note: a.note } : {}), ...(a.review_type_key ? { materialTypeKey: a.review_type_key } : {}) });
+    return { data: { upload_link: r.link, good_for_minutes: r.minutes, files: "One file, up to 25 MB. Word, PowerPoint and Excel files become Google Docs, Slides and Sheets.", after: staff ? "It is published when it arrives. Find it with my_contributions and place it with staff_move_resource." : "It goes to Foundation staff for review when it arrives." } };
+  }));
+
+  server.registerTool("my_contributions", {
+    title: "What I have contributed",
+    description: "The resources this person has added or offered, newest first, with whether each is published, waiting for review or declined, and any note staff left when declining.",
+    inputSchema: {}, annotations: READ,
+  }, run("my_contributions", async () => {
+    const rows = await getDb().select({ id: items.id, title: items.title, status: items.status, kind: items.nativeKind, at: items.publishedAt, declineNote: items.declineNote }).from(items).where(and(eq(items.sourceKind, "native"), eq(items.authorUserId, user.id), sql`${items.removedAt} is null`)).orderBy(desc(items.publishedAt)).limit(50);
+    return { data: { contributions: rows.map((r) => ({ id: r.id, title: r.title, status: r.status, kind: r.kind, added: r.at ? r.at.toISOString().slice(0, 10) : null, ...(r.status === "published" ? { link: link(r.id) } : {}), ...(r.declineNote ? { staff_note: r.declineNote } : {}) })) } };
   }));
 
   if (!staff) return server;
@@ -398,13 +467,64 @@ export function buildServer(user: SessionUser): McpServer {
     return { detail: { id: a.id, to: a.to_subjob_key }, data: { id: a.id, moved: r.moved, on_the_map: pl } };
   }));
 
+  // ---- staff: contributions
+
   server.registerTool("staff_pending_contributions", {
     title: "Staff: contributions waiting for review",
-    description: "Resources teacher leaders have shared that are waiting for a staff decision. Approving one sets where it goes on the map, which is done on the Contributions page linked in the reply.",
-    inputSchema: {}, annotations: READ,
-  }, run("staff_pending_contributions", async () => {
-    const rows = await getDb().select({ id: items.id, title: items.title, description: items.description, url: items.url, note: items.contributionNote, type: items.materialTypeKey, at: items.publishedAt, by: users.name }).from(items).leftJoin(users, eq(users.id, items.authorUserId)).where(and(eq(items.sourceKind, "native"), eq(items.status, "pending"), inArray(items.nativeKind, ["google", "file", "text"]))).orderBy(desc(items.publishedAt)).limit(50);
-    return { data: { review_at: `${base()}/admin/queues/contributions`, waiting: rows.map((r) => ({ id: r.id, title: r.title, description: r.description, link: r.url, shared_by: r.by, on: r.at ? r.at.toISOString().slice(0, 10) : null, note: r.note, type: r.type })) } };
+    description: "Resources teacher leaders have offered that are waiting for a staff decision. With no arguments, lists them with the start of each. With id, returns one in full so it can be read before deciding.",
+    inputSchema: { id: z.string().uuid().optional().describe("A contribution to read in full.") },
+    annotations: READ,
+  }, run("staff_pending_contributions", async (a) => {
+    const db = getDb();
+    const waiting = and(eq(items.sourceKind, "native"), eq(items.status, "pending"), sql`${items.removedAt} is null`);
+    if (a.id) {
+      const [r] = await db.select({ id: items.id, title: items.title, description: items.description, url: items.url, note: items.contributionNote, type: items.materialTypeKey, kind: items.nativeKind, at: items.publishedAt, by: users.name, byEmail: users.email, text: items.bodyText, markdown: items.bodyMarkdown }).from(items).leftJoin(users, eq(users.id, items.authorUserId)).where(and(waiting, eq(items.id, a.id)));
+      if (!r) throw new ToolError("There is no contribution waiting with that id.");
+      const text = r.markdown ?? r.text ?? "";
+      return { detail: { id: r.id }, data: { id: r.id, title: r.title, description: r.description, kind: r.kind, link: r.url.startsWith("/") ? null : r.url, shared_by: r.by, email: r.byEmail, on: r.at ? r.at.toISOString().slice(0, 10) : null, note_from_contributor: r.note, review_type: r.type, text: text.slice(0, 40_000), text_total_chars: text.length, ...(text ? {} : { reading: "Wisdom could not read any text from this file. Open the link to look at it." }) } };
+    }
+    const rows = await db.select({ id: items.id, title: items.title, description: items.description, url: items.url, note: items.contributionNote, type: items.materialTypeKey, kind: items.nativeKind, at: items.publishedAt, by: users.name, start: sql<string>`left(coalesce(${items.bodyMarkdown}, ${items.bodyText}, ''), 400)` }).from(items).leftJoin(users, eq(users.id, items.authorUserId)).where(waiting).orderBy(desc(items.publishedAt)).limit(50);
+    return { data: { review_page: `${base()}/admin/queues/contributions`, waiting: rows.map((r) => ({ id: r.id, title: r.title, description: r.description, kind: r.kind, link: r.url.startsWith("/") ? null : r.url, shared_by: r.by, on: r.at ? r.at.toISOString().slice(0, 10) : null, note_from_contributor: r.note, review_type: r.type, starts: r.start })) } };
+  }));
+
+  server.registerTool("staff_review_contribution", {
+    title: "Staff: approve or decline a contribution",
+    description: "Decide a waiting contribution. Approving publishes it to every teacher leader and places it on the map, so it needs at least one sub-job. Declining keeps it out and records a note the contributor can see. Read it first, and confirm the decision, placement and any new title with the staff member before calling.",
+    inputSchema: {
+      id: z.string().uuid(),
+      decision: z.enum(["approve", "decline"]),
+      subjob_keys: z.array(z.string().max(120)).max(6).optional().describe("For approve: sub-job keys from browse_map. The first is its main place."),
+      stages: z.array(z.enum(STAGE_KEYS)).max(5).optional().describe("For approve: the stages it is for."),
+      title: z.string().trim().max(200).optional().describe("For approve: a clearer title, if the contributor's needs one."),
+      description: z.string().trim().max(600).optional().describe("For approve: the description to show on the card."),
+      note: z.string().trim().max(2000).optional().describe("For decline: why, in words the contributor will read."),
+    },
+    annotations: WRITE,
+  }, run("staff_review_contribution", async (a) => {
+    const [it] = await getDb().select({ status: items.status }).from(items).where(and(eq(items.id, a.id), eq(items.sourceKind, "native")));
+    if (!it) throw new ToolError("There is no contribution with that id.");
+    if (it.status !== "pending") throw new ToolError(`That contribution is already ${it.status}.`);
+    if (a.decision === "decline") {
+      await declineContribution(a.id, a.note ?? null, actor);
+      return { detail: { id: a.id, decision: "decline" }, data: { id: a.id, status: "declined", note_recorded: !!a.note, next: "The contributor sees this under their contributions. Nothing is sent to them, so tell them yourself if they should know." } };
+    }
+    // The admin page lets a contribution be approved onto no sub-job at all; from here that would publish
+    // something nobody can browse to, with no screen in front of the staff member to show it happened.
+    if (!a.subjob_keys?.length) throw new ToolError("Approving needs at least one sub-job to place it under. Call browse_map to choose.");
+    await checkSubjobs(a.subjob_keys);
+    await approveContribution(a.id, { subjobKeys: a.subjob_keys, stages: a.stages ?? [], ...(a.title ? { title: a.title } : {}), ...(a.description !== undefined ? { description: a.description } : {}) }, actor);
+    return { detail: { id: a.id, decision: "approve", subjobs: a.subjob_keys }, data: { id: a.id, status: "published", link: link(a.id), placed_under: a.subjob_keys, stages: a.stages ?? [] } };
+  }));
+
+  server.registerTool("staff_convert_to_google_doc", {
+    title: "Staff: turn a written resource into a Google Doc",
+    description: "Turn a resource that was written here as text into a Google Doc in the Wisdom Drive, so it can be edited and commented on like the rest of the library. Works only on resources added with create_resource. It cannot be turned back.",
+    inputSchema: { id: z.string().uuid() },
+    annotations: { ...WRITE, openWorldHint: true },
+  }, run("staff_convert_to_google_doc", async (a) => {
+    let r: { url: string | null };
+    try { r = await toGoogleDoc(a.id, actor); } catch (e) { throw new ToolError((e as Error).message); }
+    return { detail: { id: a.id }, data: { id: a.id, google_doc: r.url, link: link(a.id) } };
   }));
 
   return server;

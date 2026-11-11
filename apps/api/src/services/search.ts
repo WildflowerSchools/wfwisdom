@@ -59,15 +59,20 @@ export function titleCoverage(query: string, title: string): number {
 /** A keyword candidate: its rank over the whole document, and its rank over the title alone. */
 type FtsRow = { id: string; rank: number; titleRank: number };
 
-export async function search(query: string, opts: { staff: boolean; limit?: number; userId?: string | null; language?: ResourceLanguage; regions?: string[] }): Promise<SearchResponse> {
+/**
+ * `rewrite: false` skips the model's rewrite of the query. The Claude connector passes it: Claude has
+ * already turned the person's question into search words before calling, so a second model doing the
+ * same job only adds a call and a delay. `jobKey` is the hint the rewrite would otherwise have supplied.
+ */
+export async function search(query: string, opts: { staff: boolean; limit?: number; userId?: string | null; language?: ResourceLanguage; regions?: string[]; rewrite?: boolean; jobKey?: string | null }): Promise<SearchResponse> {
   const s = await getSettings();
   const db = getDb();
   const limit = opts.limit ?? 10;
   const reader = { language: opts.language, regions: opts.regions };
-  const key = `${query.trim().toLowerCase()}|${opts.staff}|${opts.language ?? "all"}|${[...(opts.regions ?? [])].sort().join("+") || "all"}|${limit}`;
+  const key = `${query.trim().toLowerCase()}|${opts.staff}|${opts.language ?? "all"}|${[...(opts.regions ?? [])].sort().join("+") || "all"}|${limit}|${opts.rewrite === false ? `norewrite:${opts.jobKey ?? ""}` : "rewrite"}`;
   const hit = cached(key);
   if (hit) return hit;
-  let rewritten: string | null = null; let keywords: string[] = []; let jobKey: string | null = null;
+  let rewritten: string | null = null; let keywords: string[] = []; let jobKey: string | null = opts.rewrite === false ? opts.jobKey ?? null : null;
   let mode: SearchResponse["mode"] = "semantic";
   let ranked: { itemId: string; rel: number }[] = [];
   let ftsRows: FtsRow[] = [];
@@ -88,7 +93,7 @@ export async function search(query: string, opts: { staff: boolean; limit?: numb
     // The model's rewrite and the embedding of the words as typed run side by side; the rewrite's embedding follows.
     const ai = !s.killSwitch;
     const [rw, raw] = await Promise.all([
-      ai ? db.select({ key: jobs.key, name: jobs.name }).from(jobs).where(eq(jobs.hidden, false)).then(async (jobList) => { const r = await respondJson<{ query: string; keywords: string[]; job: string }>({ model: s.assistModel, system: REWRITE_SYSTEM(jobList), user: query, schema: REWRITE_SCHEMA, maxOutput: 200, timeoutMs: 10_000 }); return { ...r.data, jobList }; }).catch((e: Error) => { logger.warn({ err: e.message }, "search rewrite unavailable"); return null; }) : Promise.resolve(null),
+      ai && opts.rewrite !== false ? db.select({ key: jobs.key, name: jobs.name }).from(jobs).where(eq(jobs.hidden, false)).then(async (jobList) => { const r = await respondJson<{ query: string; keywords: string[]; job: string }>({ model: s.assistModel, system: REWRITE_SYSTEM(jobList), user: query, schema: REWRITE_SCHEMA, maxOutput: 200, timeoutMs: 10_000 }); return { ...r.data, jobList }; }).catch((e: Error) => { logger.warn({ err: e.message }, "search rewrite unavailable"); return null; }) : Promise.resolve(null),
       ai ? embed([query], s.embeddingModel).then((r) => r.vectors[0] ?? null).catch(() => null) : Promise.resolve(null),
       loadVectors(),
     ]);

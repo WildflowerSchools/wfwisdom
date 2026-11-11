@@ -34,10 +34,16 @@ describe("connector tools", () => {
     const search = tools.find((t) => t.name === "search_wisdom")!;
     expect(search.inputSchema.required).toEqual(["question"]);
   });
+  // Approving publishes to the whole network; a teacher leader can offer a resource but never decide one.
+  it("lets a teacher leader contribute but not approve", async () => {
+    const names = (await (await connect(teacher)).listTools()).tools.map((t) => t.name);
+    expect(names).toEqual(expect.arrayContaining(["create_resource", "share_resource", "request_upload_link", "my_contributions"]));
+    expect(names).not.toContain("staff_review_contribution");
+  });
   it("marks tools that only read as read-only, and the rest as not", async () => {
     const tools = (await (await connect(staffUser)).listTools()).tools;
     const readOnly = (n: string) => tools.find((t) => t.name === n)!.annotations?.readOnlyHint;
     for (const n of ["search_wisdom", "get_resource", "browse_map", "whats_new", "get_review_guide", "staff_gap_report"]) expect(readOnly(n)).toBe(true);
-    for (const n of ["log_question", "share_resource", "set_my_stage", "staff_update_resource", "staff_move_resource"]) expect(readOnly(n)).toBe(false);
+    for (const n of ["log_question", "share_resource", "create_resource", "request_upload_link", "set_my_stage", "staff_update_resource", "staff_move_resource", "staff_review_contribution"]) expect(readOnly(n)).toBe(false);
   });
 });

@@ -9,6 +9,7 @@ import { env } from "../env.js";
 import { logger } from "../logger.js";
 import { SCOPE, oauthPagesRouter, oauthProvider } from "./oauth.js";
 import { buildServer } from "./tools.js";
+import { uploadRouter } from "./upload.js";
 
 /** The same shape `resolveUser` gives a web session, so every service sees a connector user as it sees a signed-in one. */
 export async function connectorUser(userId: string): Promise<SessionUser | null> {
@@ -21,7 +22,7 @@ const rpcError = (res: Response, status: number, message: string) => { res.statu
 
 /**
  * Mounts the Claude connector: the OAuth endpoints at the root, where the MCP spec requires them, the
- * sign-in pages under /oauth, and the MCP endpoint itself at /mcp.
+ * sign-in pages under /oauth, the one-time upload pages under /upload, and the MCP endpoint itself at /mcp.
  *
  * It has to be mounted before the app's own rate limit and CORS. Every connector request arrives from
  * Anthropic's servers rather than from the person's browser, so a per-address limit sized for one
@@ -39,6 +40,7 @@ export function mountConnector(app: Express): void {
     clientRegistrationOptions: { clientSecretExpirySeconds: 0, rateLimit: { windowMs: 3600_000, limit: 300 } },
   }));
   app.use("/oauth", oauthPagesRouter);
+  app.use("/upload", uploadRouter);
 
   const bearer = requireBearerAuth({ verifier: oauthProvider, resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resource) });
   const perUser = rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: "draft-8", legacyHeaders: false, keyGenerator: (req) => String((req as Request).auth?.extra?.userId ?? "unknown"), handler: (_req, res) => rpcError(res, 429, "Too many requests. Wait a minute and try again.") });

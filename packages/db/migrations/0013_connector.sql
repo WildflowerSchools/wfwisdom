@@ -9,6 +9,9 @@
 -- small keys, never a draft or an answer. search_log.question carries the asker's own words, which the
 -- search tool requires, and chat_turns.source tells an outcome Claude reported from one the Ask page wrote.
 --
+-- mcp_uploads backs the one-time upload link: a tool call cannot carry a file, so Claude hands the
+-- person a link to send it from their own browser.
+--
 -- Everything is IF NOT EXISTS because every deploy migrates.
 CREATE TABLE IF NOT EXISTS "mcp_clients" (
   "client_id" text PRIMARY KEY NOT NULL,
@@ -59,6 +62,16 @@ CREATE TABLE IF NOT EXISTS "mcp_calls" (
 CREATE INDEX IF NOT EXISTS "mcp_calls_created_idx" ON "mcp_calls" ("created_at");
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "mcp_calls_tool_idx" ON "mcp_calls" ("tool", "created_at");
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "mcp_uploads" (
+  "hash" text PRIMARY KEY NOT NULL,
+  "user_id" uuid NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+  "meta" jsonb DEFAULT '{}'::jsonb NOT NULL,
+  "item_id" uuid REFERENCES "items"("id") ON DELETE set null,
+  "used_at" timestamp with time zone,
+  "expires_at" timestamp with time zone NOT NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
 --> statement-breakpoint
 ALTER TABLE "search_log" ADD COLUMN IF NOT EXISTS "question" text;
 --> statement-breakpoint

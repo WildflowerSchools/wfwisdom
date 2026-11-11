@@ -23,15 +23,42 @@ region filters, staff-only jobs.
 | `my_profile`, `set_my_stage` | who is connected and their stage |
 | `list_review_types`, `get_review_guide` | the base prompt, guide, objectives and recommended resources for a material type |
 | `log_question` | records a question and its outcome; optionally sends it to the staff queue |
-| `rate_resource`, `share_resource` | a helpful vote; a Google file offered to the library |
-| `staff_*` | staff only: questions queue, gap report, curation, placement, pending contributions |
+| `rate_resource` | a helpful vote |
+| `create_resource`, `share_resource`, `request_upload_link` | add a resource: text written in Claude, a Google link, or a one-time link for a file on the person's device |
+| `my_contributions` | what this person has added and where each stands |
+| `staff_*` | staff only: questions queue, gap report, curation, placement, reading and deciding contributions, turning a written resource into a Google Doc |
 
 A teacher leader's connection does not carry the staff tools at all.
+
+## Search without the rewrite
+
+On the web, a model rewrites what was typed into better search terms before the search runs. Claude has
+already done that by the time it calls `search_wisdom`, so the connector passes `rewrite: false` and that
+call is skipped. Embeddings are unchanged and still come from OpenAI: the semantic half of the search
+needs an embedding model and Anthropic does not offer one. The web app's own Search, Ask and review
+still use OpenAI exactly as before.
+
+## Adding to the library
+
+Three ways in, all ending in the same place the Share page does (pending for a teacher leader, published
+for staff):
+
+- **Written in Claude.** `create_resource` takes Markdown and stores it as a page written here. Staff can
+  turn it into a Google Doc in the Wisdom Drive afterwards with `staff_convert_to_google_doc`.
+- **A Google file.** `share_resource` takes the link.
+- **A file on someone's device.** A tool call cannot carry a file, so `request_upload_link` returns a link
+  to a page at `/upload/<token>` where the person picks the file. The link takes one file, lasts thirty
+  minutes, and is the whole authorization: it does not ask for a sign-in, because the person may never
+  have opened the web app in that browser, and it allows only what they could already do there.
+
+Staff decide contributions with `staff_review_contribution`. Approving from Claude requires at least one
+sub-job, which the admin page does not, because there is no screen in front of the staff member to show
+that something was published onto no part of the map.
 
 ## Turning it on
 
 1. Deploy as usual ([`.claude/skills/release`](../.claude/skills/release/SKILL.md)). Migration `0013_connector`
-   adds four tables and three columns and changes nothing existing.
+   adds five tables and three columns and changes nothing existing.
 2. Check `https://wfwisdom.replit.app/.well-known/oauth-authorization-server` returns JSON. The addresses
    in it come from `APP_BASE_URL`, so that has to be the public https address.
 3. In Claude, add a custom connector named **Wildflower Wisdom** with the address
@@ -73,7 +100,7 @@ connector (`browse_map`, `whats_new`, `search_wisdom`) and falls back to a snaps
 
 ## Not built
 
-- Approving a contribution from Claude. It needs placement and stages; use the Contributions page.
-- Uploading a file as a contribution. Only Google links.
-- Any message pushed to people. Claude speaks only when someone opens a conversation; a digest would be
-  email, using the scheduler and Resend that are already here.
+- Any message pushed to people, including telling a contributor their resource was approved or declined.
+  Claude speaks only when someone opens a conversation; a notice would be email, using the scheduler and
+  Resend that are already here.
+- Creating a series, or editing a published resource's text, from Claude. Use the admin pages.

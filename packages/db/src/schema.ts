@@ -464,6 +464,22 @@ export const mcpTokens = pgTable("mcp_tokens", {
   createdAt: now(),
 }, (t) => [index("mcp_tokens_user_idx").on(t.userId), index("mcp_tokens_expires_idx").on(t.expiresAt)]);
 
+/**
+ * A one-time link for sending a file from a person's own device. Claude cannot carry a file in a tool
+ * call, so it asks for one of these and the person opens it in their browser.
+ */
+export const mcpUploads = pgTable("mcp_uploads", {
+  /** sha256 of the token in the link. */
+  hash: text("hash").primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** What the person told Claude about the file: title, description, note for staff, material type. */
+  meta: jsonb("meta").$type<{ title?: string; description?: string; note?: string; materialTypeKey?: string }>().notNull().default(sql`'{}'::jsonb`),
+  itemId: uuid("item_id").references(() => items.id, { onDelete: "set null" }),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: now(),
+});
+
 /** One row per connector tool call: who, which tool, and small keys (an item id, a type key). Never content. */
 export const mcpCalls = pgTable("mcp_calls", {
   id: uuid("id").primaryKey().defaultRandom(),

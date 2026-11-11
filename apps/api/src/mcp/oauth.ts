@@ -29,9 +29,9 @@ const GRANT_MINUTES = 15;
 // mid-reply can try again rather than being signed out for a dropped connection.
 const REFRESH_GRACE_SECONDS = 60;
 
-const hash = (s: string) => createHash("sha256").update(s).digest("hex");
-const rand = (bytes = 32) => randomBytes(bytes).toString("base64url");
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+export const hash = (s: string) => createHash("sha256").update(s).digest("hex");
+export const rand = (bytes = 32) => randomBytes(bytes).toString("base64url");
+export const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 
 const clientsStore: OAuthRegisteredClientsStore = {
   async getClient(clientId) {
@@ -111,7 +111,7 @@ export async function revokeConnectorAccess(userId: string): Promise<number> {
   return rows.length;
 }
 
-function page(title: string, body: string): string {
+export function page(title: string, body: string): string {
   // No script and no external assets, so the app's production content security policy needs no exception.
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title></head>
 <body style="margin:0;background:#f4f6f2;color:#294844;font-family:'Avenir Next',Avenir,'Helvetica Neue',Arial,sans-serif;line-height:1.45">
