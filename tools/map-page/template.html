@@ -126,10 +126,11 @@ footer { padding: 0 clamp(16px, 3vw, 40px) 30px; max-width: 1600px; margin: 0 au
   <section class="jobs" id="jobs" aria-label="Jobs"></section>
   <aside class="pane" id="pane" aria-live="polite"></aside>
 </main>
-<footer>When the Wildflower Wisdom connector is connected, this page shows the library live. Otherwise it shows a snapshot of __COUNT__ resources from __ASOF__, with view counts and links from Connected.</footer>
+<footer>When the MyWildflower connector is connected, this page shows the library live. Otherwise it shows a snapshot of __COUNT__ resources from __ASOF__, with view counts and links from Connected.</footer>
 <script>
 const SNAP = __DATA__;
-const SERVER = "Wildflower Wisdom";
+// The connector is found by the name it was given in Claude, so this has to match that name exactly.
+const SERVER = "MyWildflower";
 // snapshot item: [title, url, updated, views, typeIdx, stageMask, primary, secondary[], outdated, why]
 const T=0,U=1,UP=2,V=3,TY=4,SM=5,P=6,S=7,O=8,W=9;
 const $ = id => document.getElementById(id);
@@ -311,10 +312,10 @@ function keyFromHash() {
 
 function explain(e) {
   const code = e && e.code;
-  if (code === "server_not_connected" || code === "server_not_found") return { text: "Add the Wildflower Wisdom connector in Claude, under Settings then Connectors, to see the live library.", retry: true };
-  if (code === "needs_reauth") return { text: "Your Wildflower Wisdom connection has expired. Reconnect it in Claude, under Settings then Connectors.", retry: true };
-  if (code === "selection_required") return { text: "You have more than one Wildflower Wisdom connector. Choose one when Claude asks, then try again.", retry: true };
-  if (code === "not_in_manifest" || code === "approval_required" || code === "consent_required" || code === "blocked_by_policy") return { text: "This page has not been allowed to use your Wildflower Wisdom connector.", retry: true };
+  if (code === "server_not_connected" || code === "server_not_found") return { text: "Add the " + SERVER + " connector in Claude, under Settings then Connectors, to see the live library.", retry: true };
+  if (code === "needs_reauth") return { text: "Your " + SERVER + " connection has expired. Reconnect it in Claude, under Settings then Connectors.", retry: true };
+  if (code === "selection_required") return { text: "You have more than one " + SERVER + " connector. Choose one when Claude asks, then try again.", retry: true };
+  if (code === "not_in_manifest" || code === "approval_required" || code === "consent_required" || code === "blocked_by_policy") return { text: "This page has not been allowed to use your " + SERVER + " connector.", retry: true };
   if (code === "tool_error") return { text: (e.message || "Wildflower Wisdom reported a problem.").slice(0, 240), retry: true };
   if (code === "not_granted" || code === "capability_disabled" || code === "capability_removed") return { text: "The live library is not available in this view.", retry: false };
   return { text: "Wildflower Wisdom did not answer.", retry: true };

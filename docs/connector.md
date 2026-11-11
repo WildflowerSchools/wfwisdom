@@ -67,8 +67,8 @@ that something was published onto no part of the map.
      request that has no Replit login before it reaches the app, which includes all of Claude's.
    - **The Google OAuth client allows `<address>/api/auth/google/callback`** as a redirect URI. Without
      it, sign-in fails with `redirect_uri_mismatch`, on the site and for the connector alike.
-3. In Claude, add a custom connector named **Wildflower Wisdom** with the address
-   `https://mywildflower.replit.app/mcp`. The name matters: the map page asks for a connector by that name.
+3. In Claude, add a custom connector named **MyWildflower** with the address
+   `https://mywildflower.replit.app/mcp`. The name matters: the map page (`SERVER` in `tools/map-page/template.html`) asks for a connector by exactly that name.
    For the whole network, an organization owner adds it once for everyone.
 4. Connect. You are sent to Wisdom, sign in with Google if you are not already, and approve.
 
