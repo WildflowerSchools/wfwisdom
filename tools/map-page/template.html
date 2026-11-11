@@ -94,6 +94,21 @@ main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr
 .linkish { border: 0; background: transparent; color: inherit; text-decoration: underline; cursor: pointer; padding: 0; }
 .job .staffonly { font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--mark); }
 [hidden] { display: none !important; }
+.lede { margin: 0; font-size: 1rem; }
+.prose { display: flex; flex-direction: column; gap: 10px; max-width: 68ch; }
+.prose p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.parts { margin: 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 4px; }
+.part { border: 0; background: transparent; color: var(--accent); font-weight: 600; text-align: left; padding: 3px 0; cursor: pointer; }
+.part:hover { text-decoration: underline; }
+.files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.files a, .readerfoot a { color: var(--accent); font-weight: 600; overflow-wrap: anywhere; }
+.filetext { border-top: 1px solid var(--line); padding-top: 10px; }
+.filetext summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.filetext .prose { margin-top: 10px; color: var(--muted); font-size: .9rem; }
+.partnav { display: flex; flex-wrap: wrap; gap: 8px; }
+.partnav .back { text-align: left; }
+.readerfoot { border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; justify-content: space-between; font-size: .88rem; }
+.vote { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); }
 .none { color: var(--muted); margin: 0; }
 .more { color: var(--muted); font-size: .85rem; margin: 0; }
 footer { padding: 0 clamp(16px, 3vw, 40px) 30px; max-width: 1600px; margin: 0 auto; color: var(--muted); font-size: .8rem; }
@@ -138,9 +153,12 @@ function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const fmtDate = s => s ? MONTHS[+s.slice(5, 7) - 1] + " " + s.slice(0, 4) : "";
 const TYPE_LABELS = { guide: "Guides", template: "Templates", example: "Examples", policy: "Policies", training: "Training", directory: "Directories", data: "Data", news: "News", link: "Links", series: "Series", question: "Q&A", resource_list: "Resource lists", other: "Other" };
+// The badge on one resource. Spelled out, because cutting the "s" off the plural gave "Serie", "Policie" and "New".
+const TYPE_ONE = { guide: "Guide", template: "Template", example: "Example", policy: "Policy", training: "Training", directory: "Directory", data: "Data", news: "News", link: "Link", series: "Series", question: "Q&A", resource_list: "Resource list", other: "Other" };
+const typeBadge = type => TYPE_ONE[type] || (type ? type.charAt(0).toUpperCase() + type.slice(1) : "Other");
 const hashOf = key => key.replace(/[^a-z0-9]+/gi, "-");
 
-const state = { stage: "", q: "", type: "", old: false, sel: "" };
+const state = { stage: "", q: "", type: "", old: false, sel: "", read: "", series: null };
 let stages = SNAP.stages.map(s => ({ key: s.key, name: s.name, desc: s.desc }));
 let seq = 0;
 
@@ -182,7 +200,7 @@ const snapshot = {
 
 let mcp = null, liveMap = null;
 const call = (tool, input, fresh) => mcp.callTool(SERVER, tool, input, fresh ? { cache: { refresh: true } } : undefined).then(r => r.payload);
-const liveItem = r => ({ title: r.title, href: r.link, type: r.type, summary: r.summary, updated: r.updated, dated: r.dated, curation: r.curation, contains: r.contains, note: r.why_here });
+const liveItem = r => ({ id: r.id, title: r.title, href: r.link, type: r.type, summary: r.summary, updated: r.updated, dated: r.dated, curation: r.curation, contains: r.contains, note: r.why_here });
 const typed = list => state.type ? list.filter(i => i.type === state.type) : list;
 const live = {
   live: true,
@@ -234,12 +252,15 @@ function renderJobs(jobs) {
 
 function row(i) {
   const li = el("li");
-  const a = el("a", null, i.title); a.href = i.href; a.target = "_blank"; a.rel = "noopener";
+  const a = el("a", null, i.title);
+  // Live, a title opens the resource here in the reader. From the snapshot there is nothing to read, so it links out.
+  if (source.live && i.id) { a.href = "#r-" + i.id; a.onclick = e => { e.preventDefault(); openResource(i.id, i.contains && i.contains.length ? { id: i.id, title: i.title, parts: i.contains } : null); }; }
+  else { a.href = i.href; a.target = "_blank"; a.rel = "noopener"; }
   li.append(a);
   if (i.summary) li.append(el("p", "why", i.summary));
   if (i.contains && i.contains.length) li.append(el("p", "why", "Contains " + i.contains.length + (i.contains.length === 1 ? " item: " : " items: ") + i.contains.slice(0, 4).map(c => c.title).join("; ") + (i.contains.length > 4 ? "; and more" : "")));
   const m = el("div", "meta");
-  m.append(el("span", "chip", (TYPE_LABELS[i.type] || i.type || "Other").replace(/s$/, "")));
+  m.append(el("span", "chip", typeBadge(i.type)));
   if (i.curation) m.append(el("span", "chip pick", i.curation === "essential" ? "Essential" : "Recommended"));
   if (i.fresh) m.append(el("span", "chip new", "Recently updated"));
   if (i.dated) m.append(el("span", "chip old", i.dated));
@@ -257,10 +278,102 @@ function paneHead(crumb, title, back) {
   return pane;
 }
 
+/* ---- The reader: one resource, or a series and its parts, read here instead of on the site. */
+
+// What the library returns is the post's own text followed by text read out of each attached file.
+// The file text is often rough (a PDF's words run together), so it is kept apart and folded away.
+function splitText(text) {
+  const parts = text.split(/\n{2,}Attachment (.+?):\n/);
+  const files = []; for (let i = 1; i + 1 < parts.length; i += 2) files.push({ name: parts[i], text: parts[i + 1].trim() });
+  return { body: parts[0].split("\n").filter(l => !/^Includes: /.test(l)).join("\n").trim(), files };
+}
+function paragraphs(text) { const box = el("div", "prose"); text.split(/\n{2,}/).map(s => s.trim()).filter(Boolean).forEach(s => box.append(el("p", null, s))); return box; }
+function openResource(id, series) {
+  if (series) state.series = series; else if (!state.series || !state.series.parts.some(p => p.id === id)) state.series = null;
+  state.read = id;
+  try { history.replaceState(null, "", "#r-" + id); } catch (e) { /* the hash is a convenience only */ }
+  refresh();
+  if (window.matchMedia("(max-width: 900px)").matches) $("pane").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function closeReader() {
+  // From a part, back goes to its series; from anything else, back to the list it was opened from.
+  if (state.series && state.read !== state.series.id) return openResource(state.series.id, state.series);
+  state.read = ""; state.series = null;
+  try { history.replaceState(null, "", state.sel ? "#" + hashOf(state.sel) : location.pathname + location.search); } catch (e) { /* as above */ }
+  refresh();
+}
+function button(cls, label, fn) { const b = el("button", cls, label); b.type = "button"; b.onclick = fn; return b; }
+function outLink(label, href) { const a = el("a", null, label); a.href = href; a.target = "_blank"; a.rel = "noopener"; return a; }
+
+async function renderReader(mine) {
+  const pane = $("pane"); pane.textContent = "";
+  pane.append(el("p", "none", "Opening."));
+  const r = await call("get_resource", { id: state.read, max_chars: 30000 }); if (mine !== seq) return;
+  pane.textContent = "";
+  const inSeries = state.series && state.read !== state.series.id ? state.series : null;
+  pane.append(button("back", inSeries ? "Back to " + inSeries.title : "Back", closeReader));
+  const place = (r.on_the_map || [])[0];
+  if (inSeries) { const n = inSeries.parts.findIndex(p => p.id === r.id); pane.append(el("p", "crumb", "Part " + (n + 1) + " of " + inSeries.parts.length + " in " + inSeries.title)); }
+  else if (place) pane.append(el("p", "crumb", place.job + " \u203a " + place.subjob));
+  pane.append(el("h2", null, r.title));
+  const m = el("div", "meta");
+  m.append(el("span", "chip", typeBadge(r.type)));
+  if (r.curation) m.append(el("span", "chip pick", r.curation === "essential" ? "Essential" : "Recommended"));
+  if (r.dated) m.append(el("span", "chip old", r.dated));
+  if (r.author) m.append(el("span", null, r.author.replace(/\s+/g, " ")));
+  if (r.updated) m.append(el("span", null, "Updated " + fmtDate(r.updated)));
+  pane.append(m);
+  if (r.summary) pane.append(el("p", "lede", r.summary));
+
+  const parts = r.contains || [];
+  if (parts.length) {
+    pane.append(el("h3", null, "In this series"));
+    const ol = el("ol", "parts");
+    parts.forEach(p => { const li = el("li"); li.append(button("part", p.title, () => openResource(p.id, { id: r.id, title: r.title, parts }))); ol.append(li); });
+    pane.append(ol);
+  }
+  const { body, files } = splitText(r.text || "");
+  if (body) pane.append(paragraphs(body));
+  if (r.next_offset) pane.append(el("p", "more", "This is the first part of a long resource. Open it on the site for the rest."));
+
+  const links = [];
+  (r.linked_documents || []).forEach(d => links.push(outLink(d.kind === "spreadsheets" ? "Open the Google Sheet" : d.kind === "presentation" ? "Open the Google Slides" : "Open the Google Doc", d.url)));
+  (r.files || []).forEach(f => links.push(outLink(f.name, f.link)));
+  if (links.length) {
+    pane.append(el("h3", null, "Files and documents"));
+    const ul = el("ul", "files"); links.forEach(a => { const li = el("li"); li.append(a); ul.append(li); }); pane.append(ul);
+    pane.append(el("p", "more", "These open outside Claude. Files stored on the Wisdom site ask you to sign in there."));
+  }
+  files.filter(f => f.text).forEach(f => {
+    const d = el("details", "filetext"); d.append(el("summary", null, "Text read from " + f.name));
+    d.append(el("p", "more", "Read automatically from the file, so spacing and layout may be rough. Ask Claude to summarize it, or open the file."));
+    d.append(paragraphs(f.text)); pane.append(d);
+  });
+  if (!body && !parts.length && !links.length && !files.length) pane.append(el("p", "none", "There is nothing to read here. Open it on the site."));
+
+  if (inSeries) {
+    const n = inSeries.parts.findIndex(p => p.id === r.id), nav = el("div", "partnav");
+    if (n > 0) nav.append(button("back", "Previous: " + inSeries.parts[n - 1].title, () => openResource(inSeries.parts[n - 1].id, inSeries)));
+    if (n >= 0 && n < inSeries.parts.length - 1) nav.append(button("back", "Next: " + inSeries.parts[n + 1].title, () => openResource(inSeries.parts[n + 1].id, inSeries)));
+    if (nav.childNodes.length) pane.append(nav);
+  }
+  const foot = el("div", "readerfoot");
+  const vote = el("span", "vote"); vote.append(el("span", null, "Was this helpful?"));
+  const cast = helpful => async () => {
+    vote.textContent = "Saving.";
+    try { await mcp.callTool(SERVER, "rate_resource", { id: r.id, helpful }); vote.textContent = "Thanks. Your answer was recorded."; }
+    catch (e) { vote.textContent = e && (e.code === "approval_required" || e.code === "not_in_manifest" || e.code === "consent_required") ? "Recording an answer was not allowed for this page." : "That could not be recorded. Try again later."; }
+  };
+  vote.append(button("back", "Yes", cast(true)), button("back", "No", cast(false)));
+  foot.append(vote, outLink("Open on the Wisdom site", r.link));
+  pane.append(foot);
+}
+
 async function renderPane(mine) {
   const stageName = (stages.find(s => s.key === state.stage) || {}).name || "";
   const waiting = title => { if (source.live) paneHead("Wildflower Wisdom", title, !!state.sel).append(el("p", "none", "Loading.")); };
   try {
+    if (state.read && source.live) return await renderReader(mine);
     if (state.sel) {
       waiting("Opening this part of the map");
       const r = await source.sub(state.sel); if (mine !== seq) return;
@@ -286,7 +399,9 @@ async function renderPane(mine) {
     if (h.used.length) pane.append(el("h3", null, "Most used"), listOf(h.used));
   } catch (e) {
     if (mine !== seq) return;
-    paneHead("Wildflower Wisdom", "This did not load", !!state.sel).append(el("p", "none", explain(e).text), retryButton());
+    const pane = paneHead("Wildflower Wisdom", "This did not load", !!state.sel && !state.read);
+    if (state.read) pane.prepend(button("back", "Back", closeReader));
+    pane.append(el("p", "none", explain(e).text), retryButton());
   }
 }
 
@@ -297,13 +412,15 @@ async function refresh() {
   await renderPane(mine);
 }
 function select(key, scroll) {
-  state.sel = key;
+  state.sel = key; state.read = ""; state.series = null;
   try { history.replaceState(null, "", key ? "#" + hashOf(key) : location.pathname + location.search); } catch (e) { /* the hash is a convenience only */ }
   refresh();
   if (scroll && window.matchMedia("(max-width: 900px)").matches) $("pane").scrollIntoView({ behavior: "smooth", block: "start" });
 }
+const UUID = /^r-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+function readFromHash() { const m = UUID.exec(location.hash.slice(1)); return m ? m[1] : ""; }
 function keyFromHash() {
-  const h = location.hash.slice(1); if (!h) return "";
+  const h = location.hash.slice(1); if (!h || UUID.test(h)) return "";
   const keys = source.live ? liveMap.jobs.flatMap(j => j.subjobs.map(s => s.key)) : Object.keys(snapSubs);
   return keys.find(k => hashOf(k) === h) || "";
 }
@@ -344,7 +461,7 @@ async function connect(fresh) {
   if (map.stages) stages = map.stages.map(s => ({ key: s.key, name: s.name, desc: s.description }));
   if (!state.stage && map.my_stage) state.stage = map.my_stage;
   state.type = ""; $("type").value = "";
-  state.sel = keyFromHash();
+  state.sel = keyFromHash(); state.read = readFromHash();
   setSource("Live from Wildflower Wisdom, as you see it when signed in.", false);
   refresh();
 }
@@ -353,10 +470,10 @@ const typeSel = $("type");
 typeSel.append(new Option("All kinds", ""));
 Object.keys(TYPE_LABELS).forEach(k => typeSel.append(new Option(TYPE_LABELS[k], k)));
 typeSel.onchange = () => { state.type = typeSel.value; refresh(); };
-$("search").onsubmit = e => { e.preventDefault(); state.q = $("q").value.trim(); if (state.q) state.sel = ""; refresh(); };
+$("search").onsubmit = e => { e.preventDefault(); state.q = $("q").value.trim(); if (state.q) { state.sel = ""; state.read = ""; state.series = null; } refresh(); };
 $("q").oninput = e => { const v = e.target.value.trim(); if (!source.live) { state.q = v; if (v) state.sel = ""; refresh(); } else if (!v && state.q) { state.q = ""; refresh(); } };
 $("old").onchange = e => { state.old = e.target.checked; refresh(); };
-window.addEventListener("hashchange", () => { state.sel = keyFromHash(); refresh(); });
+window.addEventListener("hashchange", () => { const id = readFromHash(); if (id) { state.read = id; if (state.series && !state.series.parts.some(p => p.id === id) && state.series.id !== id) state.series = null; } else { state.read = ""; state.sel = keyFromHash(); } refresh(); });
 
 state.sel = keyFromHash();
 setSource(SNAP_NOTE, false);

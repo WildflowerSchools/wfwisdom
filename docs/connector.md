@@ -100,9 +100,16 @@ Deleting their rows from `mcp_tokens` signs their connectors out (`revokeConnect
 ## The map page
 
 `tools/map-page` holds the source of the map published as a Claude artifact. It reads live through the
-connector (`browse_map`, `whats_new`, `search_wisdom`) and falls back to a snapshot built from
+connector (`browse_map`, `whats_new`, `search_wisdom`, `get_resource`, `rate_resource`) and falls back to
+a snapshot built from
 `packages/db/seed-*.json` and `docs/stage1/mapping.csv` when the connector is not connected.
 `python3 build.py <repo root>` from that folder writes `index.html`.
+
+Live, a resource's title opens it in a reader on the same page, so a person can read a post or step
+through a series without leaving Claude. A resource has its own address there, `#r-<id>`. What the reader
+cannot do is show a PDF, a Google Doc or a video in place: a published page may not embed other sites, so
+those are links that open outside Claude. It shows the post's own text, and folds away the text read out
+of attached files, which is often rough.
 
 ## Not built
 
