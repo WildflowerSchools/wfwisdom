@@ -92,6 +92,45 @@ Overrides outrank the computed score and survive re-indexing. The score itself i
 
 **Staff → Taxonomy** renames, reorders, moves, adds, and merges jobs and sub-jobs. A job can be marked "Foundation staff" (shown last and labeled) or hidden from teacher leaders. Sub-jobs carry the stages they light up in.
 
+## Linked and held resources
+
+Every resource Wisdom keeps itself is one of two things, and the difference is where you edit it. There
+is always exactly one place, so there is never a second copy to keep up.
+
+| | Linked | Held in Wisdom |
+| --- | --- | --- |
+| What it is | A Google Doc, Sheet or Slides. The Google file is the resource. | A page written in Wisdom, or a file such as a PDF. The Wisdom record is the resource. |
+| Where you edit | In Google. | On the resource's edit page here. |
+| How changes appear | Wisdom re-reads the file when it has changed: when someone next opens the resource (checked at most every five minutes), and every night. | When you save. |
+| History | A version is kept each time the content changes, either way. | |
+
+The edit page says which a resource is, at the top.
+
+**Changing one into the other.** Both are on the edit page.
+
+- *Hold it in Wisdom* (on a linked Google Doc) brings the document in as a page: headings, lists, bold
+  and italic, links, tables and pictures. Fonts, colors, merged cells and page layout do not come. The
+  Google file is left where it is and is no longer connected; remove it so there is one copy. Sheets and
+  Slides cannot be held, since they have no page to become.
+- *Turn it into a Google Doc* (on a held page) creates a Doc in the Wisdom Drive and links to it.
+
+To edit a held page in Google and bring it back: turn it into a Google Doc, edit, then hold it in Wisdom.
+
+**Which to use.** Link a document someone will keep maintaining in Google, and anything that is a
+spreadsheet or a deck. Hold what should stay as it is until staff change it: pages written in Claude or
+here, PDFs, and material whose author has moved on.
+
+**Contributed Google links.** A linked resource shows whatever its file says, as soon as it says it. So
+when you approve a Google link a teacher leader contributed, Wisdom copies the file into the Wisdom Drive
+and links to the copy; the contributor's later edits to their own file do not appear. Untick *Copy into
+the Wisdom Drive* only when the contributor will keep the file up to date and you accept their changes
+going out unreviewed. If Google will not allow the copy (the owner has turned copying off), approval
+stops and says so, and you can publish it linked to the original instead.
+
+**Pictures.** The picture addresses in a Google export are temporary. Wisdom keeps its own copy of each
+picture in a document, in the Wisdom Drive under "Pictures in documents", and points the stored body at
+those, so a header image does not disappear a day later and survives the document being held.
+
 ## How to add a material type
 
 **Staff → Material types → Add a material type**. Give it a key (lowercase), a name, the job it belongs to, the "what good looks like" guide in Markdown (purpose, audience, must-have elements, common mistakes, tone, Wildflower-specific considerations), and a rubric of up to eight criteria with what a 5 looks like. Then open it to add reviewer notes and link Connected resources (searched from the index). Deactivate a type to hide it without deleting its history.

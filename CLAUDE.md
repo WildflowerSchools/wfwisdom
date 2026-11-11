@@ -24,7 +24,7 @@ Commands, all from the root: `pnpm dev`, `pnpm build`, `pnpm test`, `pnpm typech
 `.replit` runs `pnpm preview` in the workspace and `pnpm deploy:start` in the deployment, which is
 `db:migrate && db:seed && start` — so **every deploy migrates and seeds.** Keep both idempotent.
 
-## The five things that surprise people
+## The six things that surprise people
 
 ### 1. The indexer owns most of an item; staff overrides live beside it
 
@@ -81,6 +81,17 @@ anything still there. To take something out of circulation use `item_meta.hidden
 `nestSeries` decides what is a card and what is nested inside one. `subjobItemCounts` mirrors that logic
 in SQL, and `postsBySourceId` resolves a series' children. If you change one, change all three, or the
 count beside a job stops matching the cards under it.
+
+### 6. A native resource is edited in exactly one place
+
+`native_kind = 'google'` is *linked*: the Google file is the resource, and `body_html`/`body_text` are a
+copy Wisdom re-reads (`refreshNativeItem`) nightly and when the resource is opened (`refreshOnOpen`).
+`'text'` and `'file'` are *held*: the Wisdom record is the resource. Do not add a way to edit a linked
+resource's body here, or a held page that also follows a Google file: one editable copy each is the
+rule the two kinds exist to keep. `detachToHeld` and `toGoogleDoc` move a resource between them.
+
+A held page is Markdown. `lib/markdown.ts` writes it from a Google Doc and `markdownToHtml` reads it;
+change one and the other has to follow, or a document that came in stops rendering as it arrived.
 
 ## The Claude connector
 

@@ -96,6 +96,13 @@ export const items = pgTable("items", {
   googleFileId: text("google_file_id"),
   googleKind: text("google_kind"), // document | spreadsheets | presentation | file
   driveMime: text("drive_mime"),
+  /**
+   * Pictures inside a Google Doc, copied into the Wisdom Drive. The addresses Google's export gives for a
+   * document's images are temporary, so a body that points at them loses its pictures; these are the
+   * copies the stored body points at instead. Keyed by a hash of the image so an unchanged picture is
+   * not uploaded again on every refresh.
+   */
+  inlineImages: jsonb("inline_images").$type<{ hash: string; driveId: string; mime: string | null; bytes: number }[]>().notNull().default(sql`'[]'::jsonb`),
   authorUserId: uuid("author_user_id").references(() => users.id, { onDelete: "set null" }),
   status: text("status").notNull().default("published"), // published | pending | declined
   contributionNote: text("contribution_note"),

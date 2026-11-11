@@ -26,7 +26,7 @@ region filters, staff-only jobs.
 | `rate_resource` | a helpful vote |
 | `create_resource`, `share_resource`, `request_upload_link` | add a resource: text written in Claude, a Google link, or a one-time link for a file on the person's device |
 | `my_contributions` | what this person has added and where each stands |
-| `staff_*` | staff only: questions queue, gap report, curation, placement, reading and deciding contributions, turning a written resource into a Google Doc |
+| `staff_*` | staff only: questions queue, gap report, curation, placement, reading and deciding contributions, and moving a resource between linked and held |
 
 A teacher leader's connection does not carry the staff tools at all.
 
@@ -117,6 +117,14 @@ the tool rewrites it for a reader elsewhere: a link to another resource becomes 
 site's address, which the reader recognizes and opens in place, and other relative addresses become
 absolute. The page rebuilds that HTML element by element and keeps only formatting and links, so
 nothing in it can run.
+
+## Linked and held
+
+`get_resource` says how a resource is kept (`kept.as`: `linked` or `held`) and where it is edited; see
+"Linked and held resources" in the admin guide. `staff_convert_to_google_doc` and `staff_hold_in_wisdom`
+move a resource from one to the other, and `staff_review_contribution` copies a contributed Google file
+into the Wisdom Drive unless told to stay with the contributor's own. Reading a linked resource through
+the connector re-reads its Google file if that has changed, exactly as opening it on the site does.
 
 ## Not built
 

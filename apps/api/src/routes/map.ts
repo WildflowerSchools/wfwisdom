@@ -6,6 +6,7 @@ import { requireUser } from "../auth.js";
 import { getSettings } from "../settings.js";
 import { itemsForSubjob, mostUsed, parseTypes, postsBySourceId, startHere, subjobItemCounts, titleExpr, toSummary, itemSelect, type ItemRow, type ReaderFilters, visibleWhere } from "../services/items.js";
 import { dropDuplicateByline, mergeAdjacentLists, stripContentTokens } from "../lib/html.js";
+import { freshenBriefly } from "./native.js";
 import { googleKindOfMime, googleUrl, isGoogleAppsMime } from "../services/native.js";
 import { readerLanguage, readerRegions } from "../services/language-pref.js";
 
@@ -94,6 +95,8 @@ mapRouter.get("/subjob/:key", async (req, res) => {
 mapRouter.get("/item/:id", async (req, res) => {
   const staff = req.user!.role === "staff";
   const db = getDb();
+  // A resource linked to a Google file picks up an edit made there when it is opened, not only overnight.
+  await freshenBriefly(String(req.params.id));
   const [r] = await db.select({ ...itemSelect, authorName: sql<string | null>`coalesce(${itemMeta.displayAuthor}, ${items.authorName})`, publishedAt: sql<Date | null>`coalesce(${itemMeta.displayPublishedAt}, ${items.publishedAt})`, categories: items.categories, audiences: items.audiences, linkedDocs: items.linkedDocs, attachmentsFull: items.attachments, bodyHtml: items.bodyHtml, bodyText: items.bodyText, childPostIds: items.childPostIds, childItemIds: items.childItemIds, sourceKind: items.sourceKind, sourceId: items.sourceId, nativeKind: items.nativeKind, googleKind: items.googleKind, googleFileId: items.googleFileId, authorUserId: items.authorUserId, status: items.status, bodyMarkdown: items.bodyMarkdown, nativeAttachments: items.nativeAttachments, importedFrom: items.importedFrom, importError: items.importError }).from(items).leftJoin(itemMeta, eq(itemMeta.itemId, items.id)).where(and(eq(items.id, String(req.params.id)), visibleWhere(staff)));
   if (!r) { res.status(404).json({ error: "Not found" }); return; }
   const pl = await db.select({ key: subjobs.key, name: subjobs.name, jobName: jobs.name, jobKey: jobs.key, isPrimary: placements.isPrimary }).from(placements).innerJoin(subjobs, eq(subjobs.id, placements.subjobId)).innerJoin(jobs, eq(jobs.id, subjobs.jobId)).where(eq(placements.itemId, r.id)).orderBy(desc(placements.isPrimary));
