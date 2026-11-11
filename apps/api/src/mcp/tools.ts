@@ -7,7 +7,7 @@ import { DOC_TYPES, STAGES, type ItemSummary, type SessionUser, type StageKey } 
 import { env } from "../env.js";
 import { dropDuplicateByline, mergeAdjacentLists, stripContentTokens } from "../lib/html.js";
 import { logger } from "../logger.js";
-import { approveContribution, createNativeItem, declineContribution, setPlacements, toGoogleDoc } from "../routes/native.js";
+import { approveContribution, createNativeItem, declineContribution, detachToHeld, freshenBriefly, setPlacements, toGoogleDoc } from "../routes/native.js";
 import { CurationError, applyMetaPatch, moveItem } from "../services/curation.js";
 import { RESOURCE_LIST, filterWhere, itemSelect, itemsByIds, itemsForSubjob, mostUsed, postsBySourceId, startHere, subjobItemCounts, toSummary, visibleWhere, type ItemRow } from "../services/items.js";
 import { googleKindOfMime, googleUrl, isGoogleAppsMime } from "../services/native.js";
@@ -156,7 +156,9 @@ export function buildServer(user: SessionUser): McpServer {
     annotations: READ,
   }, run("get_resource", async (a) => {
     const db = getDb();
-    const [r] = await db.select({ ...itemSelect, authorName: sql<string | null>`coalesce(${itemMeta.displayAuthor}, ${items.authorName})`, publishedAt: sql<Date | null>`coalesce(${itemMeta.displayPublishedAt}, ${items.publishedAt})`, bodyText: items.bodyText, bodyHtml: items.bodyHtml, attachmentsFull: items.attachments, linkedDocs: items.linkedDocs, sourceId: items.sourceId, status: items.status, staffNote: itemMeta.staffNote, stages: itemMeta.stages, pinnedStage: itemMeta.pinnedStage, displayTitle: itemMeta.displayTitle, displayDescription: itemMeta.displayDescription })
+    // Linked to a Google file: pick up an edit made there before reading, as the site does.
+    if (!a.offset) await freshenBriefly(a.id);
+    const [r] = await db.select({ ...itemSelect, authorName: sql<string | null>`coalesce(${itemMeta.displayAuthor}, ${items.authorName})`, publishedAt: sql<Date | null>`coalesce(${itemMeta.displayPublishedAt}, ${items.publishedAt})`, bodyText: items.bodyText, bodyHtml: items.bodyHtml, sourceKind: items.sourceKind, nativeKind: items.nativeKind, googleKind: items.googleKind, attachmentsFull: items.attachments, linkedDocs: items.linkedDocs, sourceId: items.sourceId, status: items.status, staffNote: itemMeta.staffNote, stages: itemMeta.stages, pinnedStage: itemMeta.pinnedStage, displayTitle: itemMeta.displayTitle, displayDescription: itemMeta.displayDescription })
       .from(items).leftJoin(itemMeta, eq(itemMeta.itemId, items.id)).where(and(eq(items.id, a.id), visibleWhere(staff)));
     if (!r) throw new ToolError("That resource is not in the library, or is not available to this person.");
     const pl = await db.select({ subjob_key: subjobs.key, subjob: subjobs.name, job: jobs.name, primary: placements.isPrimary }).from(placements).innerJoin(subjobs, eq(subjobs.id, placements.subjobId)).innerJoin(jobs, eq(jobs.id, subjobs.jobId)).where(eq(placements.itemId, r.id)).orderBy(desc(placements.isPrimary));
@@ -182,6 +184,8 @@ export function buildServer(user: SessionUser): McpServer {
       text: part, text_from: offset, text_total_chars: text.length, ...(offset + part.length < text.length ? { next_offset: offset + part.length } : {}),
       files, linked_documents: r.linkedDocs.map((d) => ({ url: d.url, kind: d.kind, readable: d.status === "ok" })), ...(contains.length ? { contains } : {}),
       on_the_map: pl, helpful_votes: { yes: votes?.yes ?? 0, no: votes?.no ?? 0 },
+      // Where the resource is edited. There is exactly one such place for each, which is the point of the distinction.
+      ...(r.sourceKind === "native" && r.nativeKind !== "series" ? { kept: r.nativeKind === "google" ? { as: "linked", edit: "In Google. Wisdom re-reads the file when it changes.", google_file: r.url } : { as: "held", edit: r.nativeKind === "text" ? "In Wisdom, on the resource's edit page." : "By replacing the file on the resource's edit page.", edit_page: `${base()}/admin/resources/${r.id}` } } : {}),
       ...(staff ? { staff: { hidden: r.hidden, review_status: r.reviewStatus, staff_note: r.staffNote, stages: r.stages ?? [], pinned_stage: r.pinnedStage, title_override: r.displayTitle, description_override: r.displayDescription } } : {}),
     } };
   }));
@@ -527,6 +531,7 @@ export function buildServer(user: SessionUser): McpServer {
       title: z.string().trim().max(200).optional().describe("For approve: a clearer title, if the contributor's needs one."),
       description: z.string().trim().max(600).optional().describe("For approve: the description to show on the card."),
       note: z.string().trim().max(2000).optional().describe("For decline: why, in words the contributor will read."),
+      keep_linked_to_contributors_file: z.boolean().optional().describe("For approve, when the contribution is a Google link. By default Wisdom copies the file into its own Drive and links to the copy, so the contributor's later edits do not publish unreviewed. Set true only when the contributor will keep maintaining the file and the staff member accepts that."),
     },
     annotations: WRITE,
   }, run("staff_review_contribution", async (a) => {
@@ -541,19 +546,33 @@ export function buildServer(user: SessionUser): McpServer {
     // something nobody can browse to, with no screen in front of the staff member to show it happened.
     if (!a.subjob_keys?.length) throw new ToolError("Approving needs at least one sub-job to place it under. Call browse_map to choose.");
     await checkSubjobs(a.subjob_keys);
-    await approveContribution(a.id, { subjobKeys: a.subjob_keys, stages: a.stages ?? [], ...(a.title ? { title: a.title } : {}), ...(a.description !== undefined ? { description: a.description } : {}) }, actor);
-    return { detail: { id: a.id, decision: "approve", subjobs: a.subjob_keys }, data: { id: a.id, status: "published", link: link(a.id), placed_under: a.subjob_keys, stages: a.stages ?? [] } };
+    // Google refusing the copy is the one failure here with something to do about it, so it is said in full.
+    try { await approveContribution(a.id, { subjobKeys: a.subjob_keys, stages: a.stages ?? [], copyToWisdom: !a.keep_linked_to_contributors_file, ...(a.title ? { title: a.title } : {}), ...(a.description !== undefined ? { description: a.description } : {}) }, actor); }
+    catch (e) { throw new ToolError(`${(e as Error).message} It is still waiting. To publish it linked to the contributor's own file, approve again with keep_linked_to_contributors_file.`); }
+    const [after] = await getDb().select({ nativeKind: items.nativeKind, url: items.url }).from(items).where(eq(items.id, a.id));
+    return { detail: { id: a.id, decision: "approve", subjobs: a.subjob_keys }, data: { id: a.id, status: "published", link: link(a.id), placed_under: a.subjob_keys, stages: a.stages ?? [], ...(after?.nativeKind === "google" ? { kept: "linked", google_file: after.url, note: a.keep_linked_to_contributors_file ? "Linked to the contributor's own file: what they change there appears here." : "Linked to a copy in the Wisdom Drive. Edit that copy, not the contributor's original." } : { kept: "held" }) } };
   }));
 
   server.registerTool("staff_convert_to_google_doc", {
     title: "Staff: turn a written resource into a Google Doc",
-    description: "Turn a resource that was written here as text into a Google Doc in the Wisdom Drive, so it can be edited and commented on like the rest of the library. Works only on resources added with create_resource. It cannot be turned back.",
+    description: "Turn a resource held in Wisdom as a page into a Google Doc in the Wisdom Drive and link to it. From then on it is edited in Google and Wisdom re-reads it when it changes. staff_hold_in_wisdom does the reverse.",
     inputSchema: { id: z.string().uuid() },
     annotations: { ...WRITE, openWorldHint: true },
   }, run("staff_convert_to_google_doc", async (a) => {
     let r: { url: string | null };
     try { r = await toGoogleDoc(a.id, actor); } catch (e) { throw new ToolError((e as Error).message); }
     return { detail: { id: a.id }, data: { id: a.id, google_doc: r.url, link: link(a.id) } };
+  }));
+
+  server.registerTool("staff_hold_in_wisdom", {
+    title: "Staff: hold a linked Google Doc in Wisdom",
+    description: "Stop reading a resource from its Google Doc and hold it in Wisdom instead. The document's current content comes in as a page, with its headings, lists, links, tables and pictures; fonts, colors and page layout do not. From then on it is edited in Wisdom and changes to the Google file no longer appear. The Google file is left as it is. Only for Google Docs: a Sheet or Slides stays linked. Confirm with the staff member first.",
+    inputSchema: { id: z.string().uuid() },
+    annotations: WRITE,
+  }, run("staff_hold_in_wisdom", async (a) => {
+    let r: Awaited<ReturnType<typeof detachToHeld>>;
+    try { r = await detachToHeld(a.id, actor); } catch (e) { throw new ToolError((e as Error).message); }
+    return { detail: { id: a.id }, data: { id: a.id, kept: "held", link: link(a.id), edit_page: `${base()}/admin/resources/${a.id}`, brought_in: { characters: r.chars, pictures: r.pictures, tables: r.tables }, former_google_file: r.formerGoogleUrl, next: "The Google file still exists and is no longer connected. Tell the staff member to delete or archive it so there are not two copies to keep up." } };
   }));
 
   return server;

@@ -5,13 +5,15 @@ import { and, desc, eq, getDb, inArray, itemMeta, itemVersions, items, jobs, pla
 import { actor, requireStaff, requireUser } from "../auth.js";
 import { extractText } from "../lib/extract.js";
 import { embedItems, summarizeItems } from "../services/indexer.js";
-import { driveDownload, driveMeta, exportGoogle, googleUrl, guessMime, isGoogleAppsMime, markdownToHtml, parseGoogleLink, readNativeContent, refreshNativeItem, snapshotIfChanged, toNodeStream, uploadToDrive, type GoogleKind, type NativeKind } from "../services/native.js";
+import { copyToWisdomDrive, driveDownload, driveMeta, exportGoogle, googleUrl, inWisdomDrive, mirrorImages, guessMime, isGoogleAppsMime, markdownToHtml, parseGoogleLink, readNativeContent, refreshNativeItem, snapshotIfChanged, toNodeStream, uploadToDrive, type GoogleKind, type NativeKind } from "../services/native.js";
 import { resolveLanguage } from "../services/language.js";
 import { getSettings } from "../settings.js";
 import { loadVectors } from "../services/vectors.js";
 import { sha } from "../lib/text.js";
 import { env } from "../env.js";
 import { sanitizeBody } from "../lib/html.js";
+import { htmlToMarkdown } from "../lib/markdown.js";
+import { logger } from "../logger.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
 
@@ -77,16 +79,29 @@ contributionsRouter.post("/", upload.single("file"), async (req, res) => {
 
 // The three staff decisions below are functions rather than route bodies because the Claude connector
 // makes the same decisions (apps/api/src/mcp/tools.ts) and has to make them the same way.
-export const approveSchema = z.object({ subjobKeys: z.array(z.string()).default([]), stages: z.array(z.string()).default([]), title: z.string().max(200).optional(), description: z.string().max(600).nullable().optional() });
+export const approveSchema = z.object({ subjobKeys: z.array(z.string()).default([]), stages: z.array(z.string()).default([]), title: z.string().max(200).optional(), description: z.string().max(600).nullable().optional(),
+  /** A contributed Google link stays the contributor's file unless it is copied. See approveContribution. */
+  copyToWisdom: z.boolean().default(true) });
 /** Publish a contribution, put it on the map, and index it. False when there is no such native item. */
 export async function approveContribution(id: string, body: z.infer<typeof approveSchema>, by: string): Promise<boolean> {
   const db = getDb();
-  const [it] = await db.select({ id: items.id, status: items.status }).from(items).where(and(eq(items.id, id), eq(items.sourceKind, "native")));
+  const [it] = await db.select({ id: items.id, status: items.status, title: items.title, nativeKind: items.nativeKind, googleKind: items.googleKind, googleFileId: items.googleFileId }).from(items).where(and(eq(items.id, id), eq(items.sourceKind, "native")));
   if (!it) return false;
+  // A linked resource publishes whatever its Google file says, as soon as it says it. Left pointing at a
+  // contributor's own file, that is their later edits going out unreviewed, and a resource that breaks the
+  // day they delete the file or leave. So approval copies the file into the Wisdom Drive and links to the
+  // copy, unless staff choose to stay with the original because its owner will keep it up. Done before
+  // anything is published, so a file Google will not let us copy leaves the contribution still waiting.
+  let copiedFrom: string | null = null;
+  if (body.copyToWisdom && it.nativeKind === "google" && it.googleFileId && !(await inWisdomDrive(it.googleFileId))) {
+    const copy = await copyToWisdomDrive(it.googleFileId, body.title?.trim() || it.title);
+    copiedFrom = it.googleFileId;
+    await db.update(items).set({ googleFileId: copy.id, url: copy.webViewLink ?? googleUrl((it.googleKind ?? "document") as GoogleKind, copy.id), driveMime: copy.mimeType, nativeModifiedAt: null }).where(eq(items.id, id));
+  }
   await db.update(items).set({ status: "published", declineNote: null, ...(body.title ? { title: body.title.trim() } : {}), ...(body.description !== undefined ? { description: body.description?.trim() || null } : {}) }).where(eq(items.id, id));
   await setPlacements(id, body.subjobKeys, body.stages);
   await refreshNativeItem(id, by); await publishNative(id);
-  await db.insert(auditLog).values({ actor: by, action: "contribution.approve", target: id, detail: body as unknown as Record<string, unknown> }).catch(() => undefined);
+  await db.insert(auditLog).values({ actor: by, action: "contribution.approve", target: id, detail: { ...body, ...(copiedFrom ? { copiedFrom } : {}) } as unknown as Record<string, unknown> }).catch(() => undefined);
   return true;
 }
 export async function declineContribution(id: string, note: string | null, by: string): Promise<void> {
@@ -94,6 +109,68 @@ export async function declineContribution(id: string, note: string | null, by: s
   await db.update(items).set({ status: "declined", declineNote: note }).where(and(eq(items.id, id), eq(items.sourceKind, "native")));
   await db.insert(auditLog).values({ actor: by, action: "contribution.decline", target: id, detail: { note } }).catch(() => undefined);
 }
+/**
+ * The other direction: stop reading from the Google Doc and hold the page in Wisdom.
+ *
+ * After this the Wisdom record is the only one that matters. The document's content comes in as the
+ * Markdown the editor here works in, with its tables, and its pictures pointing at the copies Wisdom
+ * keeps. The Google file is left exactly as it is, and its address is returned so staff can remove it:
+ * leaving two editable copies around is the thing this exists to prevent, but deleting someone's file
+ * is not Wisdom's to do. Only a Google Doc can be held; a Sheet or Slides has no page to become.
+ * Throws with a message for the person.
+ */
+export async function detachToHeld(id: string, by: string): Promise<{ formerGoogleUrl: string; chars: number; pictures: number; tables: number }> {
+  const db = getDb();
+  const [it] = await db.select().from(items).where(and(eq(items.id, id), eq(items.sourceKind, "native")));
+  if (!it) throw new Error("That is not a resource Wisdom keeps itself. One still read from Connected cannot be held until it has been imported.");
+  if (it.nativeKind !== "google" || !it.googleFileId) throw new Error("This resource is not linked to a Google file");
+  if (it.googleKind !== "document") throw new Error("Only a Google Doc can be held in Wisdom. A Sheet or Slides stays linked to its file.");
+  // Read now, not from the stored copy: what is held should be the document as it stands at this moment.
+  const read = await readNativeContent(it);
+  if (read.status !== "ok") throw new Error(read.status === "private" ? "Wisdom can no longer read that Google Doc, so it cannot bring the content in. Share it with Wisdom again first." : "Google did not return the document. Try again in a moment.");
+  let html = read.html; let inlineImages = it.inlineImages ?? [];
+  if (/<img\b[^>]*?\bsrc="https?:/.test(html)) {
+    const m = await mirrorImages(html, inlineImages); html = m.html; inlineImages = m.images;
+    // A picture still at a Google address will break once the link is cut. Better to stop than to hold a page that loses its header next week.
+    if (/<img\b[^>]*?\bsrc="https?:\/\/[^"]*google/.test(html)) throw new Error("Wisdom could not keep a copy of every picture in the document, so it was left linked. Try again; if it keeps failing, the picture may be too large.");
+  }
+  const markdown = htmlToMarkdown(html);
+  if (!markdown.trim()) throw new Error("The document came back empty, so it was left linked.");
+  const formerGoogleUrl = it.url;
+  await db.update(items).set({ nativeKind: "text", bodyMarkdown: markdown, googleFileId: null, googleKind: null, driveMime: null, nativeModifiedAt: null, inlineImages, url: `/item/${id}`, contentType: sql`case when ${items.contentType} = 'Google Doc' then 'Note' else ${items.contentType} end` }).where(eq(items.id, id));
+  await refreshNativeItem(id, `${by} (held in Wisdom)`);
+  if (it.status === "published") await publishNative(id);
+  await db.insert(auditLog).values({ actor: by, action: "native.detach", target: id, detail: { fileId: it.googleFileId, formerGoogleUrl } }).catch(() => undefined);
+  return { formerGoogleUrl, chars: markdown.length, pictures: (markdown.match(/!\[[^\]]*\]\(/g) ?? []).length, tables: (markdown.match(/^\| --- /gm) ?? []).length };
+}
+
+const OPEN_CHECK_MS = 5 * 60_000;
+/**
+ * A linked resource is re-read when someone opens it, if its Google file has changed.
+ *
+ * The nightly run was the only thing that picked up an edit made in Google, so a correction could sit
+ * unseen for a day. Opening the resource now asks Drive when the file last changed, which is one small
+ * request, and re-reads it only if that is newer than what Wisdom holds. Each resource is checked at
+ * most once every five minutes however many people open it. The caller decides how long to wait: a
+ * reader gets the page either way, fresh if Google answered in time.
+ */
+export async function refreshOnOpen(id: string): Promise<boolean> {
+  const db = getDb();
+  // Claiming the check and testing whether one is due are a single statement, so ten people opening the same page cause one check.
+  const [it] = await db.update(items).set({ indexedAt: new Date() }).where(and(eq(items.id, id), eq(items.sourceKind, "native"), eq(items.status, "published"), sql`${items.nativeKind} in ('google','file')`, sql`${items.googleFileId} is not null`, sql`(${items.indexedAt} is null or ${items.indexedAt} < ${new Date(Date.now() - OPEN_CHECK_MS)})`)).returning({ googleFileId: items.googleFileId, nativeModifiedAt: items.nativeModifiedAt });
+  if (!it?.googleFileId) return false;
+  const meta = await driveMeta(it.googleFileId);
+  if (!meta?.modifiedTime || (it.nativeModifiedAt && new Date(meta.modifiedTime).getTime() <= it.nativeModifiedAt.getTime())) return false;
+  const r = await refreshNativeItem(id, "refresh on open");
+  // Search catches up behind the reader; nobody waits on an embedding to see a page.
+  if (r.changed) void publishNative(id).catch((e: Error) => logger.warn({ err: e.message, itemId: id }, "re-indexing after a refresh on open failed"));
+  return r.changed;
+}
+/** refreshOnOpen, for at most `ms`: the page is served on time whether or not Google has answered. */
+export async function freshenBriefly(id: string, ms = 3000): Promise<void> {
+  await Promise.race([refreshOnOpen(id).catch((e: Error) => { logger.warn({ err: e.message, itemId: id }, "refresh on open failed"); }), new Promise((r) => setTimeout(r, ms).unref())]);
+}
+
 /** Turn a page written here into a Google Doc in the Wisdom Drive, so it can be edited like everything else. Throws with a message for the person. */
 export async function toGoogleDoc(id: string, by: string): Promise<{ url: string | null; refreshed: { changed: boolean; status: string } }> {
   const db = getDb();
@@ -195,9 +272,14 @@ nativeAdminRouter.post("/:id/versions/:version/restore", async (req, res) => {
 nativeAdminRouter.post("/:id/to-google", async (req, res) => {
   try { res.json({ ok: true, ...(await toGoogleDoc(String(req.params.id), actor(req))) }); } catch (e) { res.status(400).json({ error: (e as Error).message }); }
 });
+nativeAdminRouter.post("/:id/detach", async (req, res) => {
+  try { res.json({ ok: true, ...(await detachToHeld(String(req.params.id), actor(req))) }); } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+});
 nativeAdminRouter.post("/contributions/:id/approve", async (req, res) => {
   const body = approveSchema.parse(req.body);
-  if (!(await approveContribution(String(req.params.id), body, actor(req)))) { res.status(404).json({ error: "Not found" }); return; }
+  // The one way approval fails for a reason staff can act on: Google refusing the copy.
+  try { if (!(await approveContribution(String(req.params.id), body, actor(req)))) { res.status(404).json({ error: "Not found" }); return; } }
+  catch (e) { res.status(400).json({ error: `${(e as Error).message} You can publish it linked to the contributor's own file instead.` }); return; }
   res.json({ ok: true });
 });
 nativeAdminRouter.post("/contributions/:id/decline", async (req, res) => {
@@ -218,10 +300,12 @@ nativeFilesRouter.use(requireUser);
 nativeFilesRouter.get("/:fileId", async (req, res) => {
   const fileId = String(req.params.fileId);
   if (!/^[A-Za-z0-9_-]{10,}$/.test(fileId)) { res.status(400).json({ error: "Bad id" }); return; }
-  const [it] = await getDb().select({ id: items.id, driveMime: items.driveMime, title: items.title, status: items.status, authorUserId: items.authorUserId, nativeAttachments: items.nativeAttachments, googleFileId: items.googleFileId }).from(items).where(and(eq(items.sourceKind, "native"), sql`${items.googleFileId} = ${fileId} or ${items.nativeAttachments} @> ${JSON.stringify([{ driveId: fileId }])}::jsonb`)).limit(1);
+  const [it] = await getDb().select({ id: items.id, driveMime: items.driveMime, title: items.title, status: items.status, authorUserId: items.authorUserId, nativeAttachments: items.nativeAttachments, inlineImages: items.inlineImages, googleFileId: items.googleFileId }).from(items).where(and(eq(items.sourceKind, "native"), sql`${items.googleFileId} = ${fileId} or ${items.nativeAttachments} @> ${JSON.stringify([{ driveId: fileId }])}::jsonb or ${items.inlineImages} @> ${JSON.stringify([{ driveId: fileId }])}::jsonb`)).limit(1);
   if (!it || (it.status !== "published" && req.user!.role !== "staff" && it.authorUserId !== req.user!.id)) { res.status(404).json({ error: "Not found" }); return; }
   const att = it.googleFileId === fileId ? null : (it.nativeAttachments ?? []).find((a) => a.driveId === fileId) ?? null;
-  const mime = att ? att.mime : it.driveMime; const name = att ? att.name : it.title;
+  // A picture inside a document: served as the image it is, never as the document's own type.
+  const pic = !att && it.googleFileId !== fileId ? (it.inlineImages ?? []).find((a) => a.driveId === fileId) ?? null : null;
+  const mime = pic ? pic.mime : att ? att.mime : it.driveMime; const name = pic ? "picture" : att ? att.name : it.title;
   try {
     const up = await driveDownload(fileId, typeof req.headers.range === "string" ? req.headers.range : undefined, mime);
     if (!up.ok && up.status !== 206) { res.status(502).json({ error: `Drive returned ${up.status}` }); return; }

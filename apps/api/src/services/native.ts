@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { and, desc, eq, getDb, itemVersions, items, sql } from "@wfw/db";
 import { env } from "../env.js";
@@ -144,6 +145,64 @@ export async function uploadToDrive(buf: Buffer, name: string, mime: string, con
   return await r.json() as DriveMeta;
 }
 
+/** Whether a Drive file already lives in the Wisdom Drive, so that copying it there would only make a duplicate. */
+export async function inWisdomDrive(id: string): Promise<boolean> {
+  const h = await authHeaders(); const folder = env.googleSharedDriveId;
+  if (!h.Authorization || !folder) return false;
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?supportsAllDrives=true&fields=driveId,parents,ownedByMe`, { headers: h });
+  if (!r.ok) return false;
+  const j = await r.json() as { driveId?: string; parents?: string[]; ownedByMe?: boolean };
+  // In the shared drive, directly in the Wisdom folder, or uploaded by Wisdom itself: all three mean it is ours.
+  return j.driveId === folder || (j.parents ?? []).includes(folder) || j.ownedByMe === true;
+}
+/** Copy a Google file into the Wisdom Drive. Fails when its owner does not let viewers copy it. */
+export async function copyToWisdomDrive(id: string, name: string): Promise<DriveMeta> {
+  const h = await writeHeaders();
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}/copy?supportsAllDrives=true&fields=${UPLOAD_FIELDS}`, { method: "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify({ name, parents: [driveFolder()] }) });
+  if (!r.ok) throw new Error(`Google would not let Wisdom copy that file (${r.status}). Its owner may have turned off copying, or Wisdom may only be able to view it through a public link.`);
+  return await r.json() as DriveMeta;
+}
+
+export type InlineImage = { hash: string; driveId: string; mime: string | null; bytes: number };
+const MAX_IMAGES = 40; const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
+async function fetchImage(url: string): Promise<{ buf: Buffer; mime: string } | null> {
+  const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 20_000);
+  try {
+    const r = await fetch(url, { redirect: "follow", signal: ctrl.signal });
+    const mime = (r.headers.get("content-type") ?? "").split(";")[0]!.trim();
+    if (!r.ok || !mime.startsWith("image/")) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    return buf.length && buf.length <= MAX_IMAGE_BYTES ? { buf, mime } : null;
+  } catch { return null; } finally { clearTimeout(t); }
+}
+async function storeImage(buf: Buffer, mime: string, hash: string): Promise<string> {
+  const folder = await ensureFolder("Pictures in documents");
+  return (await uploadToDrive(buf, `${hash.slice(0, 16)}.${mime.split("/")[1]?.replace(/[^a-z0-9]/gi, "") || "img"}`, mime, false, { parent: folder })).id;
+}
+/**
+ * Point a document's pictures at copies Wisdom keeps.
+ *
+ * The addresses in a Google export are temporary, so a stored body that uses them shows broken pictures
+ * once they lapse, and a page detached from its Google file would have nothing to point at at all. Each
+ * picture is fetched, and stored once: `existing` is what the item already has, matched by a hash of the
+ * image, so re-reading a document whose header has not changed uploads nothing. A picture that cannot
+ * be fetched keeps its original address: a picture that may break later is better than none now.
+ */
+export async function mirrorImages(html: string, existing: InlineImage[], io: { fetch: typeof fetchImage; store: typeof storeImage } = { fetch: fetchImage, store: storeImage }): Promise<{ html: string; images: InlineImage[] }> {
+  const srcs = [...new Set([...html.matchAll(/<img\b[^>]*?\bsrc="(https?:\/\/[^"]+)"/g)].map((m) => m[1]!))].slice(0, MAX_IMAGES);
+  const images = [...existing]; let out = html;
+  for (const src of srcs) {
+    try {
+      const got = await io.fetch(src.replace(/&amp;/g, "&")); if (!got) continue;
+      const hash = createHash("sha256").update(got.buf).digest("hex");
+      let img = images.find((i) => i.hash === hash);
+      if (!img) { img = { hash, driveId: await io.store(got.buf, got.mime, hash), mime: got.mime, bytes: got.buf.length }; images.push(img); }
+      out = out.split(`src="${src}"`).join(`src="/api/files/native/${img.driveId}"`);
+    } catch (e) { logger.warn({ err: (e as Error).message }, "could not keep a copy of a document picture"); }
+  }
+  return { html: out, images };
+}
+
 const CHUNK = 32 * 1024 * 1024;
 /**
  * Resumable upload straight from a byte stream, for videos and other large files that must not be held in memory.
@@ -197,22 +256,42 @@ export async function driveDownload(id: string, range?: string, mime?: string | 
 }
 export const toNodeStream = (body: ReadableStream<Uint8Array>) => Readable.fromWeb(body as never);
 
-/** Markdown written in the app, rendered to sanitized HTML (headings, lists, links, emphasis, quotes). */
+/**
+ * Markdown written in the app, rendered to sanitized HTML: headings, lists, links, emphasis, quotes, and
+ * the two things a document brought in from Google needs that hand-written notes rarely did, tables and
+ * pictures. lib/markdown.ts writes this format from a Google Doc; anything it can write, this reads.
+ */
 export function markdownToHtml(md: string): string {
-  const inline = (s: string) => esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>');
-  const lines = md.replace(/\r/g, "").split("\n"); const out: string[] = []; let list: "ul" | "ol" | null = null; let para: string[] = [];
+  const unaddr = (u: string) => u.replace(/&amp;/g, "&");
+  const inline = (s: string) => esc(s)
+    .replace(/!\[([^\]]*)\]\(((?:https?:\/\/|\/api\/files\/native\/)[^)\s]+)\)/g, (_m, alt: string, src: string) => `<img src="${esc(unaddr(src))}" alt="${alt}">`)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>").replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]]+)\]\(((?:https?:\/\/|\/item\/|\/c\/)[^)\s]+)\)/g, (_m, text: string, href: string) => `<a href="${esc(unaddr(href))}">${text}</a>`);
+  const cells = (l: string) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
+  const lines = md.replace(/\r/g, "").split("\n"); const out: string[] = []; let list: "ul" | "ol" | null = null; let para: string[] = []; let rows: string[][] = [];
   const flushP = () => { if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; } };
   const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  const flushTable = () => {
+    if (!rows.length) return;
+    // The second line of a table is its rule (| --- | --- |): it marks the first as the header and is not a row.
+    const ruled = rows.length > 1 && rows[1]!.every((c) => /^:?-{2,}:?$/.test(c));
+    const head = ruled ? rows[0]! : null; const body = ruled ? rows.slice(2) : rows;
+    out.push(`<table>${head ? `<thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead>` : ""}<tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+    rows = [];
+  };
   for (const raw of lines) {
     const l = raw.trimEnd();
+    if (/^\s*\|.*\|\s*$/.test(l)) { flushP(); closeList(); rows.push(cells(l)); continue; }
+    flushTable();
     const h = /^(#{1,4})\s+(.*)/.exec(l); const ol = /^\s*\d+[.)]\s+(.*)/.exec(l); const ul = /^\s*[-*•]\s+(.*)/.exec(l); const q = /^>\s?(.*)/.exec(l);
     if (!l.trim()) { flushP(); closeList(); continue; }
+    if (/^\s*-{3,}\s*$/.test(l)) { flushP(); closeList(); out.push("<hr>"); continue; }
     if (h) { flushP(); closeList(); const lvl = Math.min(4, h[1]!.length + 1); out.push(`<h${lvl}>${inline(h[2]!)}</h${lvl}>`); continue; }
     if (ol || ul) { flushP(); const kind = ol ? "ol" : "ul"; if (list !== kind) { closeList(); out.push(`<${kind}>`); list = kind; } out.push(`<li>${inline((ol ?? ul)![1]!)}</li>`); continue; }
     if (q) { flushP(); closeList(); out.push(`<blockquote>${inline(q[1]!)}</blockquote>`); continue; }
     para.push(l);
   }
-  flushP(); closeList();
+  flushP(); closeList(); flushTable();
   return sanitizeBody(out.join("\n"));
 }
 
@@ -245,8 +324,14 @@ export async function refreshNativeItem(itemId: string, by = "system"): Promise<
   const db = getDb();
   const [it] = await db.select().from(items).where(eq(items.id, itemId));
   if (!it || it.sourceKind !== "native") return { changed: false, status: "missing" };
-  const read = await readNativeContent(it);
+  let read = await readNativeContent(it);
   if (read.status !== "ok") return { changed: false, status: read.status };
+  // Only where there is a Drive to keep them in, and never at the cost of the refresh itself.
+  let inlineImages = it.inlineImages ?? [];
+  if (it.nativeKind === "google" && env.googleSharedDriveId && /<img\b[^>]*?\bsrc="https?:/.test(read.html)) {
+    try { const m = await mirrorImages(read.html, inlineImages); read = { ...read, html: m.html }; inlineImages = m.images; }
+    catch (e) { logger.warn({ err: (e as Error).message, itemId }, "document pictures were left at their Google addresses"); }
+  }
   // Imported items carry their own intro (the old post's words) and the text of their files; both stay searchable.
   const introText = it.introHtml ? normalizeWs(stripHtml(it.introHtml)) : "";
   const text = [introText, read.text, it.attachmentText ?? ""].filter(Boolean).join("\n\n").slice(0, 400_000);
@@ -256,7 +341,7 @@ export async function refreshNativeItem(itemId: string, by = "system"): Promise<
   const changed = hash !== it.contentHash || (it.bodyHtml ?? "") !== content.html;
   if (changed) {
     const language = content.text ? await resolveLanguage({ title: it.title, description: it.description, body: content.text }) : null;
-    await db.update(items).set({ bodyText: content.text, bodyHtml: content.html, contentHash: hash, hasText: content.text.length >= 300, sourceUpdatedAt: content.modifiedAt ?? it.sourceUpdatedAt ?? new Date(), nativeModifiedAt: content.modifiedAt, driveMime: content.mime ?? it.driveMime, indexedAt: new Date(), ...(language ? { language } : {}) }).where(eq(items.id, itemId));
+    await db.update(items).set({ bodyText: content.text, bodyHtml: content.html, contentHash: hash, hasText: content.text.length >= 300, sourceUpdatedAt: content.modifiedAt ?? it.sourceUpdatedAt ?? new Date(), nativeModifiedAt: content.modifiedAt, driveMime: content.mime ?? it.driveMime, inlineImages, indexedAt: new Date(), ...(language ? { language } : {}) }).where(eq(items.id, itemId));
     await snapshotIfChanged(itemId, content, it.title, it.bodyMarkdown, by);
   } else await db.update(items).set({ indexedAt: new Date() }).where(eq(items.id, itemId));
   return { changed, status: "ok" };
