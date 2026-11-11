@@ -1,0 +1,1 @@
+- [Startup seeding budget](startup-seeding.md) — production startup timed out while seeding before the HTTP listener; keep database round trips bounded.

@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "echo skip",
+    "test": "tsx --test src/*.test.ts",
     "generate": "drizzle-kit generate --config drizzle.config.ts",
     "migrate": "tsx src/migrate.ts",
     "seed": "tsx src/seed.ts"
