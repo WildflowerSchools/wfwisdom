@@ -1,7 +1,7 @@
 import express, { type Express, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
-import { getOAuthProtectedResourceMetadataUrl, mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
+import { createOAuthMetadata, getOAuthProtectedResourceMetadataUrl, mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { eq, getDb, users } from "@wfw/db";
 import { isResourceLanguage, parseRegionFilter, type SessionUser } from "@wfw/shared";
@@ -32,6 +32,19 @@ const rpcError = (res: Response, status: number, message: string) => { res.statu
 export function mountConnector(app: Express): void {
   const issuer = new URL(env.appBaseUrl);
   const resource = new URL("/mcp", issuer);
+  // These routes sit ahead of the app's request logger, and without a line per request a failed
+  // connection from Claude leaves nothing to look at. Paths only: no query strings, which carry codes
+  // and state, and the upload token is cut out of its path.
+  const paths = ["/mcp", "/authorize", "/token", "/register", "/revoke", "/oauth", "/upload", "/.well-known"];
+  app.use(paths, (req, res, next) => {
+    const started = Date.now();
+    res.on("finish", () => logger.info({ method: req.method, path: (req.originalUrl.split("?")[0] ?? "").replace(/^\/upload\/.+/, "/upload/:token"), status: res.statusCode, ms: Date.now() - started, agent: String(req.headers["user-agent"] ?? "").slice(0, 80) }, "connector request"));
+    next();
+  });
+  // helmet's default, same-origin, cuts a sign-in window off from the page that opened it for good, even
+  // after the window returns to that page's own site. A client that opens sign-in in a popup and waits to
+  // hear back from it would then wait forever. Only the pages a person passes through while connecting.
+  app.use(["/authorize", "/oauth"], (_req, res, next) => { res.setHeader("Cross-Origin-Opener-Policy", "unsafe-none"); next(); });
   app.use(mcpAuthRouter({
     provider: oauthProvider, issuerUrl: issuer, resourceServerUrl: resource, scopesSupported: [SCOPE], resourceName: "Wildflower Wisdom",
     // Token renewals for everyone come from the same few addresses, so the SDK's per-address default (50 in 15 minutes) is far too low.
@@ -39,6 +52,15 @@ export function mountConnector(app: Express): void {
     // A client registers once and keeps its secret. An expiring secret would quietly disconnect everyone a month after launch.
     clientRegistrationOptions: { clientSecretExpirySeconds: 0, rateLimit: { windowMs: 3600_000, limit: 300 } },
   }));
+  // Clients look for the discovery documents in more than one place: with the resource's path and
+  // without it, in either order. The SDK serves one of each. The other two are answered here, and
+  // anything else under /.well-known is a plain 404: left alone it would fall through to the web
+  // app, which answers every unknown path with its HTML page and a 200, and a client that takes that
+  // for a discovery document fails on it instead of trying the next address.
+  const open = (res: Response) => { res.setHeader("access-control-allow-origin", "*"); res.setHeader("cache-control", "no-store"); return res; };
+  app.get("/.well-known/oauth-protected-resource", (_req, res) => { open(res).json({ resource: resource.href, authorization_servers: [issuer.href], scopes_supported: [SCOPE], resource_name: "Wildflower Wisdom" }); });
+  app.get("/.well-known/oauth-authorization-server/mcp", (_req, res) => { open(res).json(createOAuthMetadata({ provider: oauthProvider, issuerUrl: issuer, scopesSupported: [SCOPE] })); });
+  app.use("/.well-known", (_req, res) => { open(res).status(404).json({ error: "not_found" }); });
   app.use("/oauth", oauthPagesRouter);
   app.use("/upload", uploadRouter);
 

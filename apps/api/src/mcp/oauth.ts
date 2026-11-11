@@ -56,7 +56,8 @@ async function issueTokens(clientId: string, userId: string, scopes: string[], r
   ]);
   // Nothing else sweeps these tables, and issuing is the one moment a sweep is guaranteed to keep happening.
   void Promise.all([db.delete(mcpTokens).where(lt(mcpTokens.expiresAt, new Date(now - 86400_000))), db.delete(mcpGrants).where(lt(mcpGrants.expiresAt, new Date(now - 86400_000)))]).catch((e: Error) => logger.warn({ err: e.message }, "connector token sweep failed"));
-  return { access_token: access, token_type: "bearer", expires_in: ACCESS_SECONDS, refresh_token: refresh, scope: scopes.join(" ") };
+  // Capitalized as RFC 6750 writes it. The comparison is meant to be case-insensitive, but not every client makes it so.
+  return { access_token: access, token_type: "Bearer", expires_in: ACCESS_SECONDS, refresh_token: refresh, scope: scopes.join(" ") };
 }
 
 export const oauthProvider: OAuthServerProvider = {
