@@ -13,6 +13,7 @@ import { resolveUser } from "./auth.js";
 import { env } from "./env.js";
 import { logger } from "./logger.js";
 import { OpenAIError } from "./lib/openai.js";
+import { mountConnector } from "./mcp/index.js";
 import { adminRouter } from "./routes/admin.js";
 import { authRouter } from "./routes/auth.js";
 import { filesRouter } from "./routes/files.js";
@@ -36,6 +37,8 @@ const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
 app.use(env.isProd ? helmet({ contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], scriptSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"], fontSrc: ["'self'", "https://fonts.gstatic.com"], imgSrc: ["'self'", "data:", "https:"], mediaSrc: ["'self'", "blob:"], frameSrc: ["'self'", "https://docs.google.com", "https://drive.google.com", "https://www.youtube.com", "https://www.youtube-nocookie.com", "https://player.vimeo.com", "https://www.loom.com"], connectSrc: ["'self'"] } } }) : helmet({ contentSecurityPolicy: false }));
+// The Claude connector, ahead of CORS and the per-address rate limit for the reasons given where it is defined.
+mountConnector(app);
 app.use(cors({ origin: env.isProd ? env.appBaseUrl : true, credentials: true }));
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: false, limit: "2mb" }));

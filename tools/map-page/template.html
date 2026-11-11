@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wildflower Wisdom Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Layout: teal band with the journey stages on top; job map on the left, a reading pane on the right that stacks below at narrow widths. */
+  --bg: #f4f6f2; --surface: #ffffff; --ink: #294844; --muted: #566c66; --line: #cbdad4;
+  --accent: #137070; --accent-pale: #e1f3f0; --on-accent: #fffdf8;
+  --band: #137070; --on-band: #ffffff; --band-soft: rgba(255,255,255,.16);
+  --mark: #c9531a; --sun: #f7d538; --warn-bg: #fff4d6; --warn: #795600;
+  --display: "EB Garamond", Garamond, "Times New Roman", serif;
+  --body: "Avenir Next", Avenir, "Helvetica Neue", Arial, sans-serif;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1c1b; --surface: #172927; --ink: #dcebe7; --muted: #9bb3ad; --line: #2c4541;
+    --accent: #6fd0c6; --accent-pale: #1d3a37; --on-accent: #0c1e1c;
+    --band: #12302e; --on-band: #e6f2ef; --band-soft: rgba(255,255,255,.1);
+    --mark: #f59a62; --sun: #f7d538; --warn-bg: #3a3010; --warn: #f0d37a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1c1b; --surface: #172927; --ink: #dcebe7; --muted: #9bb3ad; --line: #2c4541;
+  --accent: #6fd0c6; --accent-pale: #1d3a37; --on-accent: #0c1e1c;
+  --band: #12302e; --on-band: #e6f2ef; --band-soft: rgba(255,255,255,.1);
+  --mark: #f59a62; --sun: #f7d538; --warn-bg: #3a3010; --warn: #f0d37a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.45; font-synthesis: none; }
+button, input, select { font: inherit; color: inherit; }
+:is(a, button, input, select):focus-visible { outline: 2px solid var(--sun); outline-offset: 2px; }
+main :is(a, button, input, select):focus-visible { outline-color: var(--accent); }
+h1, h2, h3 { font-family: var(--display); font-weight: 500; margin: 0; text-wrap: balance; }
+
+.band { background: var(--band); color: var(--on-band); padding: 22px clamp(16px, 3vw, 40px) 18px; display: flex; flex-direction: column; gap: 16px; }
+.brand { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 18px; }
+.brand h1 { font-size: 1.9rem; line-height: 1.1; }
+.brand p { margin: 0; opacity: .85; max-width: 60ch; }
+.stage-label { font-size: .78rem; letter-spacing: .06em; text-transform: uppercase; opacity: .8; margin: 0 0 6px; }
+.stages { display: flex; flex-wrap: wrap; gap: 6px; }
+.stages button { border: 1px solid var(--band-soft); background: transparent; color: var(--on-band); border-radius: 999px; padding: 7px 14px; cursor: pointer; display: inline-flex; gap: 8px; align-items: center; }
+.stages button:hover { background: var(--band-soft); }
+.stages button[aria-pressed="true"] { background: var(--on-band); color: var(--band); font-weight: 700; border-color: var(--on-band); }
+.stages .n { font-variant-numeric: tabular-nums; font-size: .8rem; opacity: .75; }
+.stage-desc { margin: 0; min-height: 1.45em; opacity: .9; font-size: .92rem; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.controls input[type="search"] { flex: 1 1 260px; min-width: 0; max-width: 520px; height: 40px; border-radius: 8px; border: 1px solid var(--band-soft); background: var(--surface); color: var(--ink); padding: 0 12px; }
+.controls select { height: 40px; border-radius: 8px; border: 1px solid var(--band-soft); background: var(--surface); color: var(--ink); padding: 0 10px; }
+.controls label.check { display: inline-flex; gap: 7px; align-items: center; font-size: .9rem; }
+
+main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr); gap: 22px; padding: 22px clamp(16px, 3vw, 40px) 40px; max-width: 1600px; margin: 0 auto; align-items: start; }
+.jobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
+.job { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 14px 10px; display: flex; flex-direction: column; gap: 8px; }
+.job.empty { opacity: .55; }
+.job header { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.job h2 { font-size: 1.22rem; color: var(--accent); line-height: 1.15; }
+.job .total { font-variant-numeric: tabular-nums; color: var(--muted); font-size: .82rem; white-space: nowrap; }
+.job p { margin: 0; color: var(--muted); font-size: .86rem; }
+.subs { list-style: none; margin: 2px -6px 0; padding: 0; display: flex; flex-direction: column; }
+.subs button { width: 100%; display: flex; justify-content: space-between; gap: 10px; align-items: baseline; text-align: left; border: 0; background: transparent; border-radius: 7px; padding: 6px; cursor: pointer; }
+.subs button:hover { background: var(--accent-pale); }
+.subs button[aria-current="true"] { background: var(--accent); color: var(--on-accent); }
+.subs button .c { font-variant-numeric: tabular-nums; font-size: .82rem; color: var(--muted); }
+.subs button[aria-current="true"] .c { color: var(--on-accent); }
+.subs button.zero { color: var(--muted); }
+
+.pane { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; position: sticky; top: 14px; max-height: calc(100vh - 28px); overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.pane .crumb { margin: 0; color: var(--muted); font-size: .82rem; }
+.pane h2 { font-size: 1.5rem; color: var(--accent); line-height: 1.15; }
+.pane h3 { font-size: 1.12rem; color: var(--accent); margin-top: 6px; }
+.pane .back { align-self: flex-start; border: 1px solid var(--line); background: transparent; border-radius: 7px; padding: 5px 10px; cursor: pointer; font-size: .85rem; }
+.pane .back:hover { background: var(--accent-pale); }
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.list li { padding: 11px 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+.list li:first-child { border-top: 0; padding-top: 2px; }
+.list a { color: var(--accent); font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
+.list a:hover { text-decoration: underline; }
+.list .why { margin: 0; font-size: .88rem; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; }
+.chip { border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; font-weight: 600; }
+.chip.old { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.chip.new { color: var(--mark); border-color: var(--mark); }
+.chip.pick { background: var(--accent-pale); color: var(--accent); border-color: transparent; }
+.source { margin: 0; font-size: .84rem; opacity: .9; min-height: 1.45em; }
+.linkish { border: 0; background: transparent; color: inherit; text-decoration: underline; cursor: pointer; padding: 0; }
+.job .staffonly { font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--mark); }
+[hidden] { display: none !important; }
+.none { color: var(--muted); margin: 0; }
+.more { color: var(--muted); font-size: .85rem; margin: 0; }
+footer { padding: 0 clamp(16px, 3vw, 40px) 30px; max-width: 1600px; margin: 0 auto; color: var(--muted); font-size: .8rem; }
+@media (max-width: 900px) {
+  main { grid-template-columns: minmax(0, 1fr); }
+  .pane { position: static; max-height: none; order: -1; }
+}
+@media (prefers-reduced-motion: no-preference) { .subs button, .stages button { transition: background-color .12s; } }
+</style>
+</head>
+<body>
+<div class="band">
+  <div class="brand">
+    <h1>Wildflower Wisdom</h1>
+    <p>Find what the network has learned, organized by the job in front of you.</p>
+  </div>
+  <div>
+    <p class="stage-label" id="stage-label">Where are you in the journey?</p>
+    <div class="stages" id="stages" role="group" aria-labelledby="stage-label"></div>
+  </div>
+  <p class="stage-desc" id="stage-desc"></p>
+  <form class="controls" id="search">
+    <input type="search" id="q" placeholder="Filter by a word, such as bylaws or waitlist" aria-label="Find resources">
+    <select id="type" aria-label="Kind of resource"></select>
+    <label class="check" id="old-label"><input type="checkbox" id="old"> Include archived and outdated</label>
+  </form>
+  <p class="source" id="source" role="status"></p>
+</div>
+<main>
+  <section class="jobs" id="jobs" aria-label="Jobs"></section>
+  <aside class="pane" id="pane" aria-live="polite"></aside>
+</main>
+<footer>When the Wildflower Wisdom connector is connected, this page shows the library live. Otherwise it shows a snapshot of __COUNT__ resources from __ASOF__, with view counts and links from Connected.</footer>
+<script>
+const SNAP = __DATA__;
+const SERVER = "Wildflower Wisdom";
+// snapshot item: [title, url, updated, views, typeIdx, stageMask, primary, secondary[], outdated, why]
+const T=0,U=1,UP=2,V=3,TY=4,SM=5,P=6,S=7,O=8,W=9;
+const $ = id => document.getElementById(id);
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const fmtDate = s => s ? MONTHS[+s.slice(5, 7) - 1] + " " + s.slice(0, 4) : "";
+const TYPE_LABELS = { guide: "Guides", template: "Templates", example: "Examples", policy: "Policies", training: "Training", directory: "Directories", data: "Data", news: "News", link: "Links", series: "Series", question: "Q&A", resource_list: "Resource lists", other: "Other" };
+const hashOf = key => key.replace(/[^a-z0-9]+/gi, "-");
+
+const state = { stage: "", q: "", type: "", old: false, sel: "" };
+let stages = SNAP.stages.map(s => ({ key: s.key, name: s.name, desc: s.desc }));
+let seq = 0;
+
+/* ---- Two sources behind one interface. Each returns:
+   map()    -> [{key, name, desc, subs: [{key, name, count, dim}]}]
+   home()   -> {recent, used, start}
+   sub(key) -> {job, name, primary, also}
+   search() -> [item]
+   item: {title, href, type, summary, updated, views, dated, curation, place, contains, fresh} */
+
+const snapSubs = {};
+SNAP.jobs.forEach(j => j.subs.forEach(s => { snapSubs[s.key] = { sub: s, job: j }; }));
+const snapNewest = SNAP.items.reduce((m, i) => i[UP] > m ? i[UP] : m, "");
+const snapRecent = (() => { const d = new Date(snapNewest + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() - 120); return d.toISOString().slice(0, 10); })();
+const snapItem = (i, place) => ({ title: i[T], href: i[U], type: SNAP.types[i[TY]], summary: i[W], updated: i[UP], views: i[V], dated: i[O] ? "Outdated" : null, fresh: i[UP] >= snapRecent, place: place && snapSubs[i[P]] ? snapSubs[i[P]].job.name : null });
+function snapPasses(i) {
+  if (!state.old && (i[O] || (snapSubs[i[P]] && snapSubs[i[P]].job.key === "archive"))) return false;
+  if (state.stage) { const bit = SNAP.stages.findIndex(s => s.key === state.stage); if (bit >= 0 && !(i[SM] & (1 << bit))) return false; }
+  if (state.type && SNAP.types[i[TY]] !== state.type) return false;
+  if (state.q) { const q = state.q.toLowerCase(); if (!(i[T].toLowerCase().includes(q) || i[W].toLowerCase().includes(q))) return false; }
+  return true;
+}
+const byViews = (a, b) => b[V] - a[V];
+const byDate = (a, b) => (b[UP] > a[UP] ? 1 : b[UP] < a[UP] ? -1 : b[V] - a[V]);
+const snapshot = {
+  live: false,
+  async map() {
+    const counts = {}; SNAP.items.filter(snapPasses).forEach(i => { counts[i[P]] = (counts[i[P]] || 0) + 1; });
+    return SNAP.jobs.filter(j => state.old || j.key !== "archive").map(j => ({ key: j.key, name: j.name, desc: j.desc, subs: j.subs.map(s => ({ key: s.key, name: s.name, count: counts[s.key] || 0, dim: !counts[s.key] })) }));
+  },
+  async home() { const items = SNAP.items.filter(snapPasses); return { recent: items.slice().sort(byDate).slice(0, 6).map(i => snapItem(i, true)), used: items.slice().sort(byViews).slice(0, 6).map(i => snapItem(i, true)), start: [] }; },
+  async sub(key) {
+    const hit = snapSubs[key]; if (!hit) return null;
+    const items = SNAP.items.filter(snapPasses);
+    return { job: hit.job.name, name: hit.sub.name, primary: items.filter(i => i[P] === key).sort(byViews).map(i => snapItem(i, false)), also: items.filter(i => i[P] !== key && i[S].includes(key)).sort(byViews).map(i => snapItem(i, true)) };
+  },
+  async search() { return SNAP.items.filter(snapPasses).sort(byViews).slice(0, 60).map(i => snapItem(i, true)); },
+};
+
+let mcp = null, liveMap = null;
+const call = (tool, input, fresh) => mcp.callTool(SERVER, tool, input, fresh ? { cache: { refresh: true } } : undefined).then(r => r.payload);
+const liveItem = r => ({ title: r.title, href: r.link, type: r.type, summary: r.summary, updated: r.updated, dated: r.dated, curation: r.curation, contains: r.contains, note: r.why_here });
+const typed = list => state.type ? list.filter(i => i.type === state.type) : list;
+const live = {
+  live: true,
+  async map() {
+    return liveMap.jobs.map(j => ({ key: j.key, name: j.name, desc: j.description, staff: j.staff_only || j.hidden, subs: j.subjobs.map(s => ({ key: s.key, name: s.name, count: s.resources, dim: !s.resources || (state.stage && !(s.stages || []).includes(state.stage)) })) }));
+  },
+  async home() { const r = await call("whats_new", { stage: state.stage || "all" }); return { recent: typed(r.recently_updated.map(liveItem)), used: typed(r.most_used.map(liveItem)), start: typed(r.start_here.map(liveItem)) }; },
+  async sub(key) { const r = await call("browse_map", { subjob_key: key }); return { job: r.job.name, name: r.subjob.name, primary: typed(r.resources.map(liveItem)), also: [] }; },
+  async search() { const r = await call("search_wisdom", { question: state.q, limit: 15, source: "map" }); return typed(r.results.map(liveItem)); },
+};
+let source = snapshot;
+
+/* ---- Rendering */
+
+function renderStages() {
+  const box = $("stages"); box.textContent = "";
+  const mk = (key, label, n) => {
+    const b = el("button"); b.type = "button"; b.setAttribute("aria-pressed", String(state.stage === key));
+    if (n) b.append(el("span", "n", n)); b.append(el("span", null, label));
+    b.onclick = () => { state.stage = key; refresh(); };
+    box.append(b);
+  };
+  mk("", "All stages");
+  stages.forEach((s, i) => mk(s.key, s.name, String(i + 1)));
+  const cur = stages.find(s => s.key === state.stage);
+  $("stage-desc").textContent = cur ? cur.desc + "." : "Showing every stage of the School Startup Journey.";
+}
+
+function renderJobs(jobs) {
+  const box = $("jobs"); box.textContent = "";
+  jobs.forEach(j => {
+    const total = j.subs.reduce((n, s) => n + s.count, 0);
+    const card = el("article", "job" + (j.subs.every(s => s.dim) ? " empty" : ""));
+    const head = el("header"); head.append(el("h2", null, j.name), el("span", "total", total + (total === 1 ? " resource" : " resources")));
+    card.append(head);
+    if (j.staff) card.append(el("p", "staffonly", "Staff only"));
+    if (j.desc) card.append(el("p", null, j.desc));
+    const ul = el("ul", "subs");
+    j.subs.forEach(s => {
+      const li = el("li"), b = el("button", s.dim ? "zero" : ""); b.type = "button";
+      b.setAttribute("aria-current", String(state.sel === s.key));
+      b.append(el("span", null, s.name), el("span", "c", String(s.count)));
+      b.onclick = () => select(s.key, true);
+      li.append(b); ul.append(li);
+    });
+    card.append(ul); box.append(card);
+  });
+}
+
+function row(i) {
+  const li = el("li");
+  const a = el("a", null, i.title); a.href = i.href; a.target = "_blank"; a.rel = "noopener";
+  li.append(a);
+  if (i.summary) li.append(el("p", "why", i.summary));
+  if (i.contains && i.contains.length) li.append(el("p", "why", "Contains " + i.contains.length + (i.contains.length === 1 ? " item: " : " items: ") + i.contains.slice(0, 4).map(c => c.title).join("; ") + (i.contains.length > 4 ? "; and more" : "")));
+  const m = el("div", "meta");
+  m.append(el("span", "chip", (TYPE_LABELS[i.type] || i.type || "Other").replace(/s$/, "")));
+  if (i.curation) m.append(el("span", "chip pick", i.curation === "essential" ? "Essential" : "Recommended"));
+  if (i.fresh) m.append(el("span", "chip new", "Recently updated"));
+  if (i.dated) m.append(el("span", "chip old", i.dated));
+  if (i.updated) m.append(el("span", null, "Updated " + fmtDate(i.updated)));
+  if (i.views != null) m.append(el("span", null, i.views.toLocaleString() + " views"));
+  if (i.place) m.append(el("span", null, i.place));
+  li.append(m);
+  return li;
+}
+const listOf = items => { const ul = el("ul", "list"); items.forEach(i => ul.append(row(i))); return ul; };
+function paneHead(crumb, title, back) {
+  const pane = $("pane"); pane.textContent = "";
+  if (back) { const b = el("button", "back", "Back to what's new"); b.type = "button"; b.onclick = () => select("", false); pane.append(b); }
+  pane.append(el("p", "crumb", crumb), el("h2", null, title));
+  return pane;
+}
+
+async function renderPane(mine) {
+  const stageName = (stages.find(s => s.key === state.stage) || {}).name || "";
+  const waiting = title => { if (source.live) paneHead("Wildflower Wisdom", title, !!state.sel).append(el("p", "none", "Loading.")); };
+  try {
+    if (state.sel) {
+      waiting("Opening this part of the map");
+      const r = await source.sub(state.sel); if (mine !== seq) return;
+      if (!r) { state.sel = ""; return renderPane(mine); }
+      const pane = paneHead(r.job, r.name, true);
+      if (!r.primary.length && !r.also.length) pane.append(el("p", "none", "Nothing here matches your filters. Try All stages or another kind of resource."));
+      if (r.primary.length) pane.append(listOf(r.primary));
+      if (r.also.length) pane.append(el("h3", null, "Also useful here"), listOf(r.also));
+      return;
+    }
+    if (state.q) {
+      waiting("Searching for “" + state.q + "”");
+      const items = await source.search(); if (mine !== seq) return;
+      const pane = paneHead(items.length + (items.length === 1 ? " result" : " results") + (stageName && !source.live ? " in " + stageName : ""), (source.live ? "Results for “" : "Resources mentioning “") + state.q + "”", false);
+      pane.append(items.length ? listOf(items) : el("p", "none", source.live ? "Nothing in the library matched. Try other words, or ask Claude the full question." : "No resource title or summary contains that word. Try a shorter word, or ask Claude the full question."));
+      return;
+    }
+    waiting("What's new");
+    const h = await source.home(); if (mine !== seq) return;
+    const pane = paneHead(stageName ? "For the " + stageName + " stage" : "Across every stage", h.start.length ? "Start here" : "Recently updated", false);
+    if (h.start.length) pane.append(listOf(h.start), el("h3", null, "Recently updated"));
+    pane.append(h.recent.length ? listOf(h.recent) : el("p", "none", "Nothing has changed recently for these filters."));
+    if (h.used.length) pane.append(el("h3", null, "Most used"), listOf(h.used));
+  } catch (e) {
+    if (mine !== seq) return;
+    paneHead("Wildflower Wisdom", "This did not load", !!state.sel).append(el("p", "none", explain(e).text), retryButton());
+  }
+}
+
+async function refresh() {
+  const mine = ++seq;
+  renderStages();
+  renderJobs(await source.map());
+  await renderPane(mine);
+}
+function select(key, scroll) {
+  state.sel = key;
+  try { history.replaceState(null, "", key ? "#" + hashOf(key) : location.pathname + location.search); } catch (e) { /* the hash is a convenience only */ }
+  refresh();
+  if (scroll && window.matchMedia("(max-width: 900px)").matches) $("pane").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function keyFromHash() {
+  const h = location.hash.slice(1); if (!h) return "";
+  const keys = source.live ? liveMap.jobs.flatMap(j => j.subjobs.map(s => s.key)) : Object.keys(snapSubs);
+  return keys.find(k => hashOf(k) === h) || "";
+}
+
+/* ---- Connecting to the live library. Each failure has its own fix, so each gets its own words. */
+
+function explain(e) {
+  const code = e && e.code;
+  if (code === "server_not_connected" || code === "server_not_found") return { text: "Add the Wildflower Wisdom connector in Claude, under Settings then Connectors, to see the live library.", retry: true };
+  if (code === "needs_reauth") return { text: "Your Wildflower Wisdom connection has expired. Reconnect it in Claude, under Settings then Connectors.", retry: true };
+  if (code === "selection_required") return { text: "You have more than one Wildflower Wisdom connector. Choose one when Claude asks, then try again.", retry: true };
+  if (code === "not_in_manifest" || code === "approval_required" || code === "consent_required" || code === "blocked_by_policy") return { text: "This page has not been allowed to use your Wildflower Wisdom connector.", retry: true };
+  if (code === "tool_error") return { text: (e.message || "Wildflower Wisdom reported a problem.").slice(0, 240), retry: true };
+  if (code === "not_granted" || code === "capability_disabled" || code === "capability_removed") return { text: "The live library is not available in this view.", retry: false };
+  return { text: "Wildflower Wisdom did not answer.", retry: true };
+}
+function retryButton() { const b = el("button", "back", "Try again"); b.type = "button"; b.onclick = () => (source.live ? refresh() : connect(true)); return b; }
+function setSource(text, retry) {
+  const p = $("source"); p.textContent = text;
+  if (retry) { const b = el("button", "linkish", "Try the live library"); b.type = "button"; b.onclick = () => connect(true); p.append(" ", b); }
+  document.body.dataset.live = String(source.live);
+  $("old-label").hidden = source.live;
+  $("q").placeholder = source.live ? "Search the library, then press Enter" : "Filter by a word, such as bylaws or waitlist";
+}
+const SNAP_NOTE = "Showing a snapshot of the catalog from __ASOF__. ";
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+async function connect(fresh) {
+  if (!mcp) { setSource(SNAP_NOTE + "The live library is not available in this view.", false); return; }
+  setSource("Connecting to Wildflower Wisdom.", false);
+  let map = null, err = null;
+  for (let attempt = 0; attempt < 2 && !map; attempt++) {
+    try { map = await call("browse_map", {}, fresh); }
+    catch (e) { err = e; if (!(e && e.retryable) || attempt) break; await wait(Math.min(e.retryAfterMs || 1500, 8000) + Math.random() * 500); }
+  }
+  if (!map || !Array.isArray(map.jobs) || !map.jobs.every(j => Array.isArray(j.subjobs))) { source = snapshot; const x = explain(err); setSource(SNAP_NOTE + x.text, x.retry); refresh(); return; }
+  liveMap = map; source = live;
+  if (map.stages) stages = map.stages.map(s => ({ key: s.key, name: s.name, desc: s.description }));
+  if (!state.stage && map.my_stage) state.stage = map.my_stage;
+  state.type = ""; $("type").value = "";
+  state.sel = keyFromHash();
+  setSource("Live from Wildflower Wisdom, as you see it when signed in.", false);
+  refresh();
+}
+
+const typeSel = $("type");
+typeSel.append(new Option("All kinds", ""));
+Object.keys(TYPE_LABELS).forEach(k => typeSel.append(new Option(TYPE_LABELS[k], k)));
+typeSel.onchange = () => { state.type = typeSel.value; refresh(); };
+$("search").onsubmit = e => { e.preventDefault(); state.q = $("q").value.trim(); if (state.q) state.sel = ""; refresh(); };
+$("q").oninput = e => { const v = e.target.value.trim(); if (!source.live) { state.q = v; if (v) state.sel = ""; refresh(); } else if (!v && state.q) { state.q = ""; refresh(); } };
+$("old").onchange = e => { state.old = e.target.checked; refresh(); };
+window.addEventListener("hashchange", () => { state.sel = keyFromHash(); refresh(); });
+
+state.sel = keyFromHash();
+setSource(SNAP_NOTE, false);
+refresh();
+(async () => {
+  try { mcp = window.claude ? await window.claude.use("mcp") : null; } catch (e) { mcp = null; }
+  connect(false);
+})();
+</script>
+</body>
+</html>

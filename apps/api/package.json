@@ -14,6 +14,7 @@
     "import:connected": "tsx src/cli/import-connected.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@wfw/db": "workspace:*",
     "@wfw/shared": "workspace:*",
     "cors": "^2.8.5",

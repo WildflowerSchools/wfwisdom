@@ -303,6 +303,8 @@ export const chatTurns = pgTable("chat_turns", {
   shareStatus: text("share_status").notNull().default("none"), // none | pending | approved | rejected
   shareDecidedBy: text("share_decided_by"),
   shareDecidedAt: timestamp("share_decided_at", { withTimezone: true }),
+  /** web: answered by the Ask page. connector: answered by Claude, which reported the outcome here. */
+  source: text("source").notNull().default("web"),
   createdAt: now(),
 }, (t) => [index("chat_user_idx").on(t.userId), index("chat_created_idx").on(t.createdAt), index("chat_review_idx").on(t.staffReviewRequested, t.createdAt), index("chat_share_idx").on(t.shareStatus, t.createdAt)]);
 
@@ -324,6 +326,10 @@ export const searchLog = pgTable("search_log", {
   rewritten: text("rewritten"),
   mode: text("mode"),
   resultCount: integer("result_count"),
+  /** The asker's question in their own words, when the search came through the Claude connector. */
+  question: text("question"),
+  /** web | connector | map — which front door the search came through. */
+  source: text("source").notNull().default("web"),
   createdAt: now(),
 });
 
@@ -416,3 +422,54 @@ export const itemVersions = pgTable("item_versions", {
   createdBy: text("created_by"),
   createdAt: now(),
 }, (t) => [index("item_versions_item_idx").on(t.itemId, t.version)]);
+
+/**
+ * The Claude connector (apps/api/src/mcp). Wisdom is its own OAuth authorization server so a connector
+ * signs in with the same Google account as the web app; these three tables are that server's state.
+ */
+export const mcpClients = pgTable("mcp_clients", {
+  clientId: text("client_id").primaryKey(),
+  /** The registration as the MCP SDK validated it (RFC 7591), secret included when the client has one. */
+  info: jsonb("info").$type<Record<string, unknown>>().notNull(),
+  createdAt: now(),
+});
+
+/** One sign-in attempt: created when a client asks to authorize, completed when the user approves. */
+export const mcpGrants = pgTable("mcp_grants", {
+  id: text("id").primaryKey(),
+  clientId: text("client_id").notNull().references(() => mcpClients.clientId, { onDelete: "cascade" }),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+  redirectUri: text("redirect_uri").notNull(),
+  codeChallenge: text("code_challenge").notNull(),
+  state: text("state"),
+  scopes: text("scopes").array().notNull().default(sql`'{}'::text[]`),
+  resource: text("resource"),
+  /** Hashes only: the approve token is shown once on the consent page, the code is sent once to the client. */
+  approveHash: text("approve_hash"),
+  codeHash: text("code_hash").unique(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: now(),
+});
+
+export const mcpTokens = pgTable("mcp_tokens", {
+  /** sha256 of the token. The token itself is never stored. */
+  hash: text("hash").primaryKey(),
+  kind: text("kind").notNull(), // access | refresh
+  clientId: text("client_id").notNull().references(() => mcpClients.clientId, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  scopes: text("scopes").array().notNull().default(sql`'{}'::text[]`),
+  resource: text("resource"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: now(),
+}, (t) => [index("mcp_tokens_user_idx").on(t.userId), index("mcp_tokens_expires_idx").on(t.expiresAt)]);
+
+/** One row per connector tool call: who, which tool, and small keys (an item id, a type key). Never content. */
+export const mcpCalls = pgTable("mcp_calls", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  tool: text("tool").notNull(),
+  detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  ok: boolean("ok").notNull().default(true),
+  createdAt: now(),
+}, (t) => [index("mcp_calls_created_idx").on(t.createdAt), index("mcp_calls_tool_idx").on(t.tool, t.createdAt)]);
