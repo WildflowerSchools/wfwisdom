@@ -507,7 +507,7 @@ function explain(e) {
 }
 function retryButton() { const b = el("button", "back", "Try again"); b.type = "button"; b.onclick = () => (source.live ? refresh() : connect(true)); return b; }
 function setSource(text, retry) {
-  const p = $("source"); p.textContent = text;
+  const p = $("source"); p.textContent = text; p.hidden = !text;
   if (retry) { const b = el("button", "linkish", "Try the live library"); b.type = "button"; b.onclick = () => connect(true); p.append(" ", b); }
   document.body.dataset.live = String(source.live);
   $("old-label").hidden = source.live;
@@ -530,7 +530,8 @@ async function connect(fresh) {
   if (!state.stage && map.my_stage) state.stage = map.my_stage;
   state.type = ""; $("type").value = "";
   state.sel = keyFromHash(); state.read = readFromHash();
-  setSource("Live from Wildflower Wisdom, as you see it when signed in.", false);
+  // Nothing to say when it is working. The line is only for when it is not: the snapshot, and what to do about it.
+  setSource("", false);
   refresh();
 }
 
