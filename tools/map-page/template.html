@@ -51,7 +51,6 @@ h1, h2, h3 { font-family: var(--display); font-weight: 500; margin: 0; text-wrap
 .stages button:hover { background: var(--band-soft); }
 .stages button[aria-pressed="true"] { background: var(--on-band); color: var(--band); font-weight: 700; border-color: var(--on-band); }
 .stages .n { font-variant-numeric: tabular-nums; font-size: .8rem; opacity: .75; }
-.stage-desc { margin: 0; min-height: 1.45em; opacity: .9; font-size: .92rem; }
 .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .controls input[type="search"] { flex: 1 1 260px; min-width: 0; max-width: 520px; height: 40px; border-radius: 8px; border: 1px solid var(--band-soft); background: var(--surface); color: var(--ink); padding: 0 12px; }
 .controls select { height: 40px; border-radius: 8px; border: 1px solid var(--band-soft); background: var(--surface); color: var(--ink); padding: 0 10px; }
@@ -143,7 +142,6 @@ footer { padding: 0 clamp(16px, 3vw, 40px) 30px; max-width: 1600px; margin: 0 au
     <p class="stage-label" id="stage-label">Where are you in the journey?</p>
     <div class="stages" id="stages" role="group" aria-labelledby="stage-label"></div>
   </div>
-  <p class="stage-desc" id="stage-desc"></p>
   <form class="controls" id="search">
     <input type="search" id="q" placeholder="Filter by a word, such as bylaws or waitlist" aria-label="Find resources">
     <select id="type" aria-label="Kind of resource"></select>
@@ -239,8 +237,6 @@ function renderStages() {
   };
   mk("", "All stages");
   stages.forEach((s, i) => mk(s.key, s.name, String(i + 1)));
-  const cur = stages.find(s => s.key === state.stage);
-  $("stage-desc").textContent = cur ? cur.desc + "." : "Showing every stage of the School Startup Journey.";
 }
 
 function renderJobs(jobs) {
