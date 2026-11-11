@@ -11,7 +11,7 @@ export async function fetchLinkText(url: string, maxChars = 80_000): Promise<{ t
   }
   try {
     const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 20_000);
-    const r = await fetch(url, { redirect: "follow", signal: ctrl.signal, headers: { "user-agent": "WildflowerWisdom/1.0 (+https://wfwisdom.replit.app)" } }).finally(() => clearTimeout(t));
+    const r = await fetch(url, { redirect: "follow", signal: ctrl.signal, headers: { "user-agent": "WildflowerWisdom/1.0 (+https://mywildflower.replit.app)" } }).finally(() => clearTimeout(t));
     if (!r.ok) return { title: url, text: "", status: r.status === 401 || r.status === 403 ? "private" : "error" };
     const ct = r.headers.get("content-type") ?? "";
     const raw = (await r.text()).slice(0, 3_000_000);

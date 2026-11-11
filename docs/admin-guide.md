@@ -126,11 +126,11 @@ Set in the Replit app's Secrets (not in code):
 | --- | --- | --- |
 | `OPENAI_API_KEY` | Reviews, search, chat, embeddings | Create a new key at platform.openai.com, paste it, restart the app, then delete the old key. |
 | `BLOOMFIRE_API_KEY` and `BLOOMFIRE_LOGIN_EMAIL` | Indexer login to Connected | Bloomfire Settings → Integrations (Owner role) regenerates the key. The email is any Bloomfire account the indexer logs in as; a dedicated account is better than a person's. |
-| `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` | Google sign-in | Google Cloud Console → Credentials → the OAuth client. Add a new secret, paste it, restart, then remove the old one. Redirect URIs must include `https://wfwisdom.replit.app/api/auth/google/callback` and the development URL. |
+| `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` | Google sign-in | Google Cloud Console → Credentials → the OAuth client. Add a new secret, paste it, restart, then remove the old one. Redirect URIs must include `https://mywildflower.replit.app/api/auth/google/callback` and the development URL. |
 | `RESEND_API_KEY` | "Email me this feedback" | Resend dashboard → API keys. `MAIL_FROM` sets the sender (a verified wildflowerschools.org address). |
 | `SESSION_SECRET` | Signs session cookies | Any 64 random characters. Rotating it signs everyone out. |
 | `DATABASE_URL` | Replit Postgres | Managed by Replit. |
-| `APP_BASE_URL` | The public URL, used for OAuth redirects and email links | `https://wfwisdom.replit.app` in production. |
+| `APP_BASE_URL` | The public URL, used for OAuth redirects and email links | `https://mywildflower.replit.app` in production. |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | Read private Google files; read and write the Wisdom shared drive | Google Cloud console: IAM & Admin, Service Accounts, Keys, Add key (JSON). Paste the whole file. To rotate: add a new key, replace the secret, delete the old key. |
 | `GOOGLE_IMPERSONATE_EMAIL` | Domain user the service account acts as (domain-wide delegation) | A real licensed user, not an alias. Authorize the service account's client ID for scope `https://www.googleapis.com/auth/drive` in Google Admin, Security, API controls, Domain-wide delegation. |
 | `GOOGLE_SHARED_DRIVE_ID` | The "Wildflower Wisdom" shared drive | The id after `/folders/` in the shared drive's URL. Add the service account's email and the impersonated user as Managers. |

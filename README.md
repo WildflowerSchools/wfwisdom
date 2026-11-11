@@ -1,6 +1,6 @@
 # Wildflower Wisdom
 
-A site that helps emerging Wildflower school teams find and use Connected (the Wildflower knowledge base) and get AI feedback on the materials they write. Published at https://wfwisdom.replit.app.
+A site that helps emerging Wildflower school teams find and use Connected (the Wildflower knowledge base) and get AI feedback on the materials they write. Published at https://mywildflower.replit.app.
 
 - `apps/api` — Express API: Google sign-in, the Connected indexer, search and chat, draft reviews, admin.
 - `apps/web` — React + Vite app: teacher-leader pages (start here, map, search, ask, get feedback) and the staff workspace.

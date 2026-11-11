@@ -59,10 +59,16 @@ that something was published onto no part of the map.
 
 1. Deploy as usual ([`.claude/skills/release`](../.claude/skills/release/SKILL.md)). Migration `0013_connector`
    adds five tables and three columns and changes nothing existing.
-2. Check `https://wfwisdom.replit.app/.well-known/oauth-authorization-server` returns JSON. The addresses
+2. Check `https://mywildflower.replit.app/.well-known/oauth-authorization-server` returns JSON. The addresses
    in it come from `APP_BASE_URL`, so that has to be the public https address.
+   Two things outside the code have to be true as well, and both broke when the address changed from
+   `wfwisdom.replit.app` on 11 November 2026:
+   - **The Replit deployment's sharing is Public.** Set to private or invite-only, Replit turns away every
+     request that has no Replit login before it reaches the app, which includes all of Claude's.
+   - **The Google OAuth client allows `<address>/api/auth/google/callback`** as a redirect URI. Without
+     it, sign-in fails with `redirect_uri_mismatch`, on the site and for the connector alike.
 3. In Claude, add a custom connector named **Wildflower Wisdom** with the address
-   `https://wfwisdom.replit.app/mcp`. The name matters: the map page asks for a connector by that name.
+   `https://mywildflower.replit.app/mcp`. The name matters: the map page asks for a connector by that name.
    For the whole network, an organization owner adds it once for everyone.
 4. Connect. You are sent to Wisdom, sign in with Google if you are not already, and approve.
 

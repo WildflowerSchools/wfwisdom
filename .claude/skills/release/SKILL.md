@@ -1,12 +1,12 @@
 ---
 name: release
-description: Get a merged change from GitHub main onto https://wfwisdom.replit.app. Use whenever asked to deploy, publish, ship, release or push changes live, and for any change that adds a database migration. Covers the publish review gate that can propose destructive migrations, and the verification that a deploy actually landed.
+description: Get a merged change from GitHub main onto https://mywildflower.replit.app. Use whenever asked to deploy, publish, ship, release or push changes live, and for any change that adds a database migration. Covers the publish review gate that can propose destructive migrations, and the verification that a deploy actually landed.
 ---
 
 # Releasing Wildflower Wisdom
 
 GitHub `main` is the source of truth. Replit holds a workspace that syncs from it and a deployment that
-serves `wfwisdom.replit.app`. A release is: merge, sync the workspace, publish, verify.
+serves `mywildflower.replit.app`. A release is: merge, sync the workspace, publish, verify.
 
 Everything below exists because it went wrong once. The migration step in particular: skipping it
 produced a proposal to `DROP TABLE "taxonomy_retirements" CASCADE` against production, with data in it.

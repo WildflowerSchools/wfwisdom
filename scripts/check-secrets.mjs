@@ -33,7 +33,7 @@ async function checkGoogle() {
   if (!id) return missing("GOOGLE_CLIENT_ID"); if (!secret) return missing("GOOGLE_CLIENT_SECRET");
   if (!id.endsWith(".apps.googleusercontent.com")) return bad("GOOGLE_CLIENT_ID", "does not look like an OAuth client id");
   // A bogus code exchange distinguishes bad credentials (invalid_client) from good ones (invalid_grant).
-  const body = new URLSearchParams({ code: "bogus", client_id: id, client_secret: secret, redirect_uri: "https://wfwisdom.replit.app/api/auth/google/callback", grant_type: "authorization_code" });
+  const body = new URLSearchParams({ code: "bogus", client_id: id, client_secret: secret, redirect_uri: "https://mywildflower.replit.app/api/auth/google/callback", grant_type: "authorization_code" });
   const r = await withTimeout(fetch("https://oauth2.googleapis.com/token", { method: "POST", body }));
   const j = await r.json().catch(() => ({}));
   if (j.error === "invalid_grant") return ok("GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET", "client id and secret accepted by Google (bogus code rejected as expected)");
