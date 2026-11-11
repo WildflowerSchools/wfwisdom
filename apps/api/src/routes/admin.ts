@@ -9,6 +9,7 @@ import { importStatus, isImporting, runImport } from "../services/import-connect
 import { itemSelect, parseTypes, subjobPlacementCounts, toSummary, typeWhere, type ItemRow } from "../services/items.js";
 import { usageToday } from "../services/limits.js";
 import { REVIEW_SCHEMA, buildSystemPrompt, currentBasePrompt } from "../services/review.js";
+import { CurationError, applyMetaPatch, metaPatchSchema, moveItem, moveSchema } from "../services/curation.js";
 import { recomputeScores } from "../services/score.js";
 import { search } from "../services/search.js";
 import { getSettings, setSetting, validateSetting } from "../settings.js";
@@ -159,22 +160,9 @@ adminRouter.get("/items", async (req, res) => {
   res.json({ items: rows.map((r) => ({ ...toSummary(r as ItemRow), displayTitle: r.displayTitle, displayAuthor: r.displayAuthor, displayDescription: r.displayDescription, displayPublishedAt: r.displayPublishedAt, hidden: r.hidden, pinnedStage: r.pinnedStage, pinnedPosition: r.pinnedPosition, staffNote: r.staffNote, reviewStatus: r.reviewStatus, hasText: r.hasText, placements: pl.filter((p) => p.itemId === r.id) })), page, size });
 });
 adminRouter.patch("/items/:id/meta", async (req, res) => {
-  const b = z.object({ curation: z.enum(["essential", "recommended"]).nullable().optional(), hidden: z.boolean().optional(), displayTitle: z.string().trim().max(300).nullable().optional(), displayAuthor: z.string().trim().max(200).nullable().optional(), displayDescription: z.string().trim().max(2000).nullable().optional(), displayPublishedAt: z.string().trim().max(40).nullable().optional(), datedLabel: z.string().max(40).nullable().optional(), pinnedStage: z.string().nullable().optional(), pinnedPosition: z.number().int().nullable().optional(), staffNote: z.string().max(500).nullable().optional(), reviewStatus: z.enum(["none", "pending", "keep", "dated", "hidden"]).optional() }).parse(req.body);
-  const set: Record<string, unknown> = { ...b, updatedAt: new Date() };
-  // An emptied box means "use the title Connected carries", not a title that is the empty string.
-  if (b.displayTitle !== undefined) set.displayTitle = b.displayTitle || null;
-  if (b.displayAuthor !== undefined) set.displayAuthor = b.displayAuthor || null;
-  // Empty is meaningful here: it shows no description at all, where null falls back to Connected's.
-  if (b.displayDescription !== undefined) set.displayDescription = b.displayDescription;
-  // A date the material states about itself. An unparseable value is refused rather than stored as null,
-  // which would silently read as "no override" and quietly put the Connected date back.
-  if (b.displayPublishedAt !== undefined) {
-    if (!b.displayPublishedAt) set.displayPublishedAt = null;
-    else { const d = new Date(b.displayPublishedAt); if (Number.isNaN(d.getTime())) { res.status(400).json({ error: "Could not read that date" }); return; } set.displayPublishedAt = d; }
-  }
-  if (b.reviewStatus && b.reviewStatus !== "pending" && b.reviewStatus !== "none") { set.reviewedBy = actor(req); set.reviewedAt = new Date(); }
-  await getDb().insert(itemMeta).values({ itemId: String(req.params.id), ...(set as object) }).onConflictDoUpdate({ target: itemMeta.itemId, set });
-  await audit(req, "item.meta", String(req.params.id), b); res.json({ ok: true });
+  const b = metaPatchSchema.parse(req.body);
+  try { await applyMetaPatch(String(req.params.id), b, actor(req)); } catch (e) { if (e instanceof CurationError) { res.status(e.status).json({ error: e.message }); return; } throw e; }
+  res.json({ ok: true });
 });
 /**
  * The document type a reader filters by and sees on the card. Kept apart from the meta route because it
@@ -211,37 +199,10 @@ adminRouter.put("/items/:id/placements", async (req, res) => {
   for (const p of b.placements) { const sid = byKey.get(p.subjobKey); if (sid) await db.insert(placements).values({ itemId: id, subjobId: sid, isPrimary: p.isPrimary, source: "staff", position: p.position ?? null }).onConflictDoNothing(); }
   await audit(req, "item.placements", id, b); res.json({ ok: true });
 });
-/**
- * Move one resource from one sub-job to another, or copy it into a second one.
- *
- * Kept apart from the placements route, which replaces an item's whole set and so needs the caller to
- * already know every placement it has. This says what the staff member actually did — dragged this
- * resource onto that sub-job — and leaves the item's other placements alone. A move that lands where
- * the item already sits just drops the old placement.
- */
+// The rules for a move (what stays primary, what a copy leaves behind) are in services/curation.ts.
 adminRouter.post("/items/:id/move", async (req, res) => {
-  const b = z.object({ from: z.string().nullable().optional(), to: z.string(), copy: z.boolean().default(false) }).parse(req.body);
-  const db = getDb(); const id = String(req.params.id);
-  const [item] = await db.select({ id: items.id }).from(items).where(eq(items.id, id));
-  if (!item) { res.status(404).json({ error: "Item not found" }); return; }
-  const subs = await db.select({ id: subjobs.id, key: subjobs.key }).from(subjobs).where(inArray(subjobs.key, [b.to, ...(b.from ? [b.from] : [])]));
-  const to = subs.find((s) => s.key === b.to);
-  const from = b.from ? subs.find((s) => s.key === b.from) : undefined;
-  if (!to || (b.from && !from)) { res.status(404).json({ error: "Sub-job not found" }); return; }
-  if (from && from.id === to.id) { res.json({ ok: true, moved: false }); return; }
-  // The item keeps its standing: a resource that was the primary of where it came from stays primary.
-  const [old] = from ? await db.select({ isPrimary: placements.isPrimary, position: placements.position, why: placements.why }).from(placements).where(and(eq(placements.itemId, id), eq(placements.subjobId, from.id))) : [];
-  await db.insert(placements).values({ itemId: id, subjobId: to.id, isPrimary: !b.copy && (old?.isPrimary ?? false), source: "staff", position: old?.position ?? null, why: old?.why ?? null }).onConflictDoNothing();
-  if (from && !b.copy) await db.delete(placements).where(and(eq(placements.itemId, id), eq(placements.subjobId, from.id)));
-  // Dropping the primary placement — onto a sub-job the item was already in, say — would otherwise leave
-  // it placed everywhere and primary nowhere, which is what the map ranks and "most used" reads.
-  const rest = await db.select({ subjobId: placements.subjobId, isPrimary: placements.isPrimary }).from(placements).where(eq(placements.itemId, id));
-  if (rest.length && !rest.some((p) => p.isPrimary)) {
-    const promote = rest.find((p) => p.subjobId === to.id) ?? rest[0]!;
-    await db.update(placements).set({ isPrimary: true }).where(and(eq(placements.itemId, id), eq(placements.subjobId, promote.subjobId)));
-  }
-  await audit(req, b.copy ? "item.placement.copy" : "item.placement.move", id, b);
-  res.json({ ok: true, moved: true });
+  const b = moveSchema.parse(req.body);
+  try { res.json({ ok: true, ...(await moveItem(String(req.params.id), b, actor(req))) }); } catch (e) { if (e instanceof CurationError) { res.status(e.status).json({ error: e.message }); return; } throw e; }
 });
 adminRouter.get("/retirement-queue", async (req, res) => {
   const status = String(req.query.status ?? "pending");

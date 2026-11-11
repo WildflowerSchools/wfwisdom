@@ -82,6 +82,18 @@ anything still there. To take something out of circulation use `item_meta.hidden
 in SQL, and `postsBySourceId` resolves a series' children. If you change one, change all three, or the
 count beside a job stops matching the cards under it.
 
+## The Claude connector
+
+`apps/api/src/mcp` serves Wisdom to Claude as an MCP server at `/mcp`, with Wisdom as its own OAuth
+server; see [`docs/connector.md`](docs/connector.md). Three things to keep true when changing it:
+
+- **Tools call the services, never the tables directly for anything a service already answers.** That is
+  what keeps a connector user seeing exactly what a web user sees.
+- **It is mounted before CORS and the per-address rate limit on purpose.** Every request comes from
+  Anthropic's servers, so a per-address limit treats the whole network as one reader.
+- **A tool's name and arguments are an interface.** The skills and the published map page call them by
+  name; renaming one breaks both without a type error anywhere.
+
 ## Conventions
 
 - **Comments say why, not what.** Most of the comments in this repo record a decision or a trap; a

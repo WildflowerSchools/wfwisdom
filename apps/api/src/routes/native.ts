@@ -75,6 +75,39 @@ contributionsRouter.post("/", upload.single("file"), async (req, res) => {
   } catch (e) { res.status(400).json({ error: (e as Error).message }); }
 });
 
+// The three staff decisions below are functions rather than route bodies because the Claude connector
+// makes the same decisions (apps/api/src/mcp/tools.ts) and has to make them the same way.
+export const approveSchema = z.object({ subjobKeys: z.array(z.string()).default([]), stages: z.array(z.string()).default([]), title: z.string().max(200).optional(), description: z.string().max(600).nullable().optional() });
+/** Publish a contribution, put it on the map, and index it. False when there is no such native item. */
+export async function approveContribution(id: string, body: z.infer<typeof approveSchema>, by: string): Promise<boolean> {
+  const db = getDb();
+  const [it] = await db.select({ id: items.id, status: items.status }).from(items).where(and(eq(items.id, id), eq(items.sourceKind, "native")));
+  if (!it) return false;
+  await db.update(items).set({ status: "published", declineNote: null, ...(body.title ? { title: body.title.trim() } : {}), ...(body.description !== undefined ? { description: body.description?.trim() || null } : {}) }).where(eq(items.id, id));
+  await setPlacements(id, body.subjobKeys, body.stages);
+  await refreshNativeItem(id, by); await publishNative(id);
+  await db.insert(auditLog).values({ actor: by, action: "contribution.approve", target: id, detail: body as unknown as Record<string, unknown> }).catch(() => undefined);
+  return true;
+}
+export async function declineContribution(id: string, note: string | null, by: string): Promise<void> {
+  const db = getDb();
+  await db.update(items).set({ status: "declined", declineNote: note }).where(and(eq(items.id, id), eq(items.sourceKind, "native")));
+  await db.insert(auditLog).values({ actor: by, action: "contribution.decline", target: id, detail: { note } }).catch(() => undefined);
+}
+/** Turn a page written here into a Google Doc in the Wisdom Drive, so it can be edited like everything else. Throws with a message for the person. */
+export async function toGoogleDoc(id: string, by: string): Promise<{ url: string | null; refreshed: { changed: boolean; status: string } }> {
+  const db = getDb();
+  const [it] = await db.select().from(items).where(and(eq(items.id, id), eq(items.sourceKind, "native")));
+  if (!it || it.nativeKind !== "text") throw new Error("Only a page written here can be turned into a Google Doc");
+  const html = `<html><body>${[it.introHtml ?? "", markdownToHtml(it.bodyMarkdown ?? "")].filter(Boolean).join("\n").replace(/href="\/(c|item)\//g, `href="${env.appBaseUrl}/$1/`)}</body></html>`;
+  const meta = await uploadToDrive(Buffer.from(html, "utf8"), it.title, "text/html", true, it.importedFrom?.folderId ? { parent: it.importedFrom.folderId } : {});
+  await db.update(items).set({ nativeKind: "google", googleFileId: meta.id, googleKind: "document", driveMime: meta.mimeType, url: meta.webViewLink ?? googleUrl("document", meta.id), introHtml: null, bodyMarkdown: null, nativeModifiedAt: null, contentType: sql`case when ${items.contentType} in ('Note', 'question') then 'Google Doc' else ${items.contentType} end` }).where(eq(items.id, id));
+  const r = await refreshNativeItem(id, `${by} (to Google Doc)`);
+  if (it.status === "published") await publishNative(id);
+  await db.insert(auditLog).values({ actor: by, action: "native.to_google", target: id, detail: { fileId: meta.id } }).catch(() => undefined);
+  return { url: meta.webViewLink, refreshed: r };
+}
+
 /** Staff: add and edit resources, review contributions, restore versions. */
 export const nativeAdminRouter = Router();
 nativeAdminRouter.use(requireStaff);
@@ -93,7 +126,7 @@ nativeAdminRouter.post("/", upload.single("file"), async (req, res) => {
     res.status(201).json(r);
   } catch (e) { res.status(400).json({ error: (e as Error).message }); }
 });
-async function setPlacements(itemId: string, subjobKeys: string[], stages: string[]): Promise<void> {
+export async function setPlacements(itemId: string, subjobKeys: string[], stages: string[]): Promise<void> {
   const db = getDb();
   if (subjobKeys.length) {
     const subs = await db.select({ id: subjobs.id, key: subjobs.key }).from(subjobs).where(inArray(subjobs.key, subjobKeys));
@@ -160,35 +193,16 @@ nativeAdminRouter.post("/:id/versions/:version/restore", async (req, res) => {
 });
 /** Turn a page written or imported here into a Google Doc, so it is edited in Google like everything else. */
 nativeAdminRouter.post("/:id/to-google", async (req, res) => {
-  const db = getDb(); const id = String(req.params.id);
-  const [it] = await db.select().from(items).where(and(eq(items.id, id), eq(items.sourceKind, "native")));
-  if (!it || it.nativeKind !== "text") { res.status(400).json({ error: "Only a page written here can be turned into a Google Doc" }); return; }
-  try {
-    const html = `<html><body>${[it.introHtml ?? "", markdownToHtml(it.bodyMarkdown ?? "")].filter(Boolean).join("\n").replace(/href="\/(c|item)\//g, `href="${env.appBaseUrl}/$1/`)}</body></html>`;
-    const meta = await uploadToDrive(Buffer.from(html, "utf8"), it.title, "text/html", true, it.importedFrom?.folderId ? { parent: it.importedFrom.folderId } : {});
-    await db.update(items).set({ nativeKind: "google", googleFileId: meta.id, googleKind: "document", driveMime: meta.mimeType, url: meta.webViewLink ?? googleUrl("document", meta.id), introHtml: null, bodyMarkdown: null, nativeModifiedAt: null, contentType: sql`case when ${items.contentType} in ('Note', 'question') then 'Google Doc' else ${items.contentType} end` }).where(eq(items.id, id));
-    const r = await refreshNativeItem(id, `${actor(req)} (to Google Doc)`);
-    if (it.status === "published") await publishNative(id);
-    await db.insert(auditLog).values({ actor: actor(req), action: "native.to_google", target: id, detail: { fileId: meta.id } }).catch(() => undefined);
-    res.json({ ok: true, url: meta.webViewLink, refreshed: r });
-  } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+  try { res.json({ ok: true, ...(await toGoogleDoc(String(req.params.id), actor(req))) }); } catch (e) { res.status(400).json({ error: (e as Error).message }); }
 });
 nativeAdminRouter.post("/contributions/:id/approve", async (req, res) => {
-  const body = z.object({ subjobKeys: z.array(z.string()).default([]), stages: z.array(z.string()).default([]), title: z.string().max(200).optional(), description: z.string().max(600).nullable().optional() }).parse(req.body);
-  const db = getDb(); const id = String(req.params.id);
-  const [it] = await db.select({ id: items.id, status: items.status }).from(items).where(and(eq(items.id, id), eq(items.sourceKind, "native")));
-  if (!it) { res.status(404).json({ error: "Not found" }); return; }
-  await db.update(items).set({ status: "published", declineNote: null, ...(body.title ? { title: body.title.trim() } : {}), ...(body.description !== undefined ? { description: body.description?.trim() || null } : {}) }).where(eq(items.id, id));
-  await setPlacements(id, body.subjobKeys, body.stages);
-  await refreshNativeItem(id, actor(req)); await publishNative(id);
-  await db.insert(auditLog).values({ actor: actor(req), action: "contribution.approve", target: id, detail: body as unknown as Record<string, unknown> }).catch(() => undefined);
+  const body = approveSchema.parse(req.body);
+  if (!(await approveContribution(String(req.params.id), body, actor(req)))) { res.status(404).json({ error: "Not found" }); return; }
   res.json({ ok: true });
 });
 nativeAdminRouter.post("/contributions/:id/decline", async (req, res) => {
   const body = z.object({ note: z.string().max(2000).optional() }).parse(req.body);
-  const db = getDb(); const id = String(req.params.id);
-  await db.update(items).set({ status: "declined", declineNote: body.note ?? null }).where(and(eq(items.id, id), eq(items.sourceKind, "native")));
-  await db.insert(auditLog).values({ actor: actor(req), action: "contribution.decline", target: id, detail: { note: body.note ?? null } }).catch(() => undefined);
+  await declineContribution(String(req.params.id), body.note ?? null, actor(req));
   res.json({ ok: true });
 });
 nativeAdminRouter.delete("/:id", async (req, res) => {

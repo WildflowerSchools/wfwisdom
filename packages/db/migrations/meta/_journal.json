@@ -92,6 +92,13 @@
       "when": 1790400000000,
       "tag": "0012_display_author",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790500000000,
+      "tag": "0013_connector",
+      "breakpoints": true
     }
   ]
 }
