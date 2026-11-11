@@ -93,7 +93,7 @@ main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr
 .linkish { border: 0; background: transparent; color: inherit; text-decoration: underline; cursor: pointer; padding: 0; }
 .job .staffonly { font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--mark); }
 [hidden] { display: none !important; }
-.lede { margin: 0; font-size: 1rem; }
+.lede { margin: 0; font-size: .92rem; color: var(--muted); max-width: 68ch; }
 .prose { display: flex; flex-direction: column; gap: 10px; max-width: 68ch; }
 .prose p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rich { gap: 12px; }
@@ -388,7 +388,6 @@ async function renderReader(mine) {
   if (r.author) m.append(el("span", null, r.author.replace(/\s+/g, " ")));
   if (r.updated) m.append(el("span", null, "Updated " + fmtDate(r.updated)));
   pane.append(m);
-  if (r.summary) pane.append(el("p", "lede", r.summary));
 
   const parts = r.contains || [];
   if (parts.length) {
@@ -425,6 +424,8 @@ async function renderReader(mine) {
     if (n >= 0 && n < inSeries.parts.length - 1) nav.append(button("back", "Next: " + inSeries.parts[n + 1].title, () => openResource(inSeries.parts[n + 1].id, inSeries)));
     if (nav.childNodes.length) pane.append(nav);
   }
+  // The summary is a recap written about the resource, not part of it, so it follows the resource as it does on the site.
+  if (r.summary) pane.append(el("h3", null, "At a glance"), el("p", "lede", r.summary));
   const foot = el("div", "readerfoot");
   const vote = el("span", "vote"); vote.append(el("span", null, "Was this helpful?"));
   const cast = helpful => async () => {
