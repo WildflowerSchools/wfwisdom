@@ -8,7 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@500;600&display=swap" rel="stylesheet">
 <style>
 :root {
-  /* Layout: teal band with the journey stages on top; job map on the left, a reading pane on the right that stacks below at narrow widths. */
+  /* Layout: teal band with the journey stages on top; one tree of jobs and their sub-jobs down the left, a wide reading pane on the right that stacks above it at narrow widths. */
   --bg: #f4f6f2; --surface: #ffffff; --ink: #294844; --muted: #566c66; --line: #cbdad4;
   --accent: #137070; --accent-pale: #e1f3f0; --on-accent: #fffdf8;
   --band: #137070; --on-band: #ffffff; --band-soft: rgba(255,255,255,.16);
@@ -56,15 +56,22 @@ h1, h2, h3 { font-family: var(--display); font-weight: 500; margin: 0; text-wrap
 .controls select { height: 40px; border-radius: 8px; border: 1px solid var(--band-soft); background: var(--surface); color: var(--ink); padding: 0 10px; }
 .controls label.check { display: inline-flex; gap: 7px; align-items: center; font-size: .9rem; }
 
-main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr); gap: 22px; padding: 22px clamp(16px, 3vw, 40px) 40px; max-width: 1600px; margin: 0 auto; align-items: start; }
-.jobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
-.job { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 14px 10px; display: flex; flex-direction: column; gap: 8px; }
-.job.empty { opacity: .55; }
-.job header { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-.job h2 { font-size: 1.22rem; color: var(--accent); line-height: 1.15; }
-.job .total { font-variant-numeric: tabular-nums; color: var(--muted); font-size: .82rem; white-space: nowrap; }
-.job p { margin: 0; color: var(--muted); font-size: .86rem; }
-.subs { list-style: none; margin: 2px -6px 0; padding: 0; display: flex; flex-direction: column; }
+main { display: grid; grid-template-columns: minmax(260px, 360px) minmax(0, 1fr); gap: 22px; padding: 22px clamp(16px, 3vw, 40px) 40px; max-width: 1500px; margin: 0 auto; align-items: start; }
+.jobs { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; display: flex; flex-direction: column; }
+.treebar { display: flex; justify-content: flex-end; gap: 12px; padding: 4px 8px 6px; font-size: .8rem; }
+.treebar button { border: 0; background: transparent; color: var(--accent); cursor: pointer; padding: 2px 0; text-decoration: underline; }
+.job { border-top: 1px solid var(--line); }
+.job:first-of-type { border-top: 0; }
+.job.empty > summary { opacity: .55; }
+.job > summary { list-style: none; display: flex; align-items: baseline; gap: 8px; padding: 9px 8px; cursor: pointer; border-radius: 7px; }
+.job > summary::-webkit-details-marker { display: none; }
+.job > summary::before { content: ""; flex: none; width: 7px; height: 7px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(-45deg); align-self: center; margin: 0 3px 0 2px; }
+.job[open] > summary::before { transform: rotate(45deg); margin-top: -3px; }
+.job > summary:hover { background: var(--accent-pale); }
+.job .name { flex: 1; font-family: var(--display); font-weight: 500; font-size: 1.12rem; color: var(--accent); line-height: 1.2; text-wrap: balance; }
+.job .total { font-variant-numeric: tabular-nums; color: var(--muted); font-size: .8rem; white-space: nowrap; }
+.job .about { margin: 0 8px 4px 22px; color: var(--muted); font-size: .84rem; }
+.subs { list-style: none; margin: 0 0 6px 16px; padding: 0 0 0 6px; border-left: 1px solid var(--line); display: flex; flex-direction: column; }
 .subs button { width: 100%; display: flex; justify-content: space-between; gap: 10px; align-items: baseline; text-align: left; border: 0; background: transparent; border-radius: 7px; padding: 6px; cursor: pointer; }
 .subs button:hover { background: var(--accent-pale); }
 .subs button[aria-current="true"] { background: var(--accent); color: var(--on-accent); }
@@ -91,7 +98,7 @@ main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr
 .chip.pick { background: var(--accent-pale); color: var(--accent); border-color: transparent; }
 .source { margin: 0; font-size: .84rem; opacity: .9; min-height: 1.45em; }
 .linkish { border: 0; background: transparent; color: inherit; text-decoration: underline; cursor: pointer; padding: 0; }
-.job .staffonly { font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--mark); }
+.job .staffonly { margin: 0 8px 2px 22px; font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--mark); }
 [hidden] { display: none !important; }
 .lede { margin: 0; font-size: .92rem; color: var(--muted); max-width: 68ch; }
 .prose { display: flex; flex-direction: column; gap: 10px; max-width: 68ch; }
@@ -129,7 +136,7 @@ footer { padding: 0 clamp(16px, 3vw, 40px) 30px; max-width: 1600px; margin: 0 au
   main { grid-template-columns: minmax(0, 1fr); }
   .pane { position: static; max-height: none; order: -1; }
 }
-@media (prefers-reduced-motion: no-preference) { .subs button, .stages button { transition: background-color .12s; } }
+@media (prefers-reduced-motion: no-preference) { .subs button, .stages button { transition: background-color .12s; } .job > summary::before { transition: transform .12s; } }
 </style>
 </head>
 <body>
@@ -150,7 +157,7 @@ footer { padding: 0 clamp(16px, 3vw, 40px) 30px; max-width: 1600px; margin: 0 au
   <p class="source" id="source" role="status"></p>
 </div>
 <main>
-  <section class="jobs" id="jobs" aria-label="Jobs"></section>
+  <nav class="jobs" id="jobs" aria-label="The library by job"></nav>
   <aside class="pane" id="pane" aria-live="polite"></aside>
 </main>
 <footer>When the MyWildflower connector is connected, this page shows the library live. Otherwise it shows a snapshot of __COUNT__ resources from __ASOF__, with view counts and links from Connected.</footer>
@@ -239,24 +246,37 @@ function renderStages() {
   stages.forEach((s, i) => mk(s.key, s.name, String(i + 1)));
 }
 
+// Which jobs are unfolded. Kept between visits in this browser only: a convenience, so the page works the same without it.
+const OPEN_KEY = "wisdom-map-open";
+let openJobs = new Set();
+try { openJobs = new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || "[]")); } catch (e) { /* starts folded */ }
+const saveOpen = () => { try { localStorage.setItem(OPEN_KEY, JSON.stringify([...openJobs])); } catch (e) { /* not remembered, still works */ } };
+
 function renderJobs(jobs) {
   const box = $("jobs"); box.textContent = "";
+  const bar = el("div", "treebar");
+  bar.append(button(null, "Open all", () => { openJobs = new Set(jobs.map(j => j.key)); saveOpen(); renderJobs(jobs); }), button(null, "Close all", () => { openJobs = new Set(); saveOpen(); renderJobs(jobs); }));
+  box.append(bar);
   jobs.forEach(j => {
     const total = j.subs.reduce((n, s) => n + s.count, 0);
-    const card = el("article", "job" + (j.subs.every(s => s.dim) ? " empty" : ""));
-    const head = el("header"); head.append(el("h2", null, j.name), el("span", "total", total + (total === 1 ? " resource" : " resources")));
-    card.append(head);
-    if (j.staff) card.append(el("p", "staffonly", "Staff only"));
-    if (j.desc) card.append(el("p", null, j.desc));
+    const node = el("details", "job" + (j.subs.every(s => s.dim) ? " empty" : ""));
+    // The job holding the sub-job being read is always unfolded, so the place you are is never hidden.
+    node.open = openJobs.has(j.key) || j.subs.some(s => s.key === state.sel);
+    const head = el("summary"); head.append(el("span", "name", j.name), el("span", "total", String(total)));
+    head.setAttribute("aria-label", j.name + ", " + total + (total === 1 ? " resource" : " resources"));
+    node.append(head);
+    node.addEventListener("toggle", () => { if (node.open) openJobs.add(j.key); else openJobs.delete(j.key); saveOpen(); });
+    if (j.staff) node.append(el("p", "staffonly", "Staff only"));
+    if (j.desc) node.append(el("p", "about", j.desc));
     const ul = el("ul", "subs");
     j.subs.forEach(s => {
       const li = el("li"), b = el("button", s.dim ? "zero" : ""); b.type = "button";
       b.setAttribute("aria-current", String(state.sel === s.key));
       b.append(el("span", null, s.name), el("span", "c", String(s.count)));
-      b.onclick = () => select(s.key, true);
+      b.onclick = () => { openJobs.add(j.key); saveOpen(); select(s.key, true); };
       li.append(b); ul.append(li);
     });
-    card.append(ul); box.append(card);
+    node.append(ul); box.append(node);
   });
 }
 
