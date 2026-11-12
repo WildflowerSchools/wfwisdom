@@ -17,6 +17,8 @@ export const STAGES: { key: StageKey; name: string; description: string }[] = [
 export type Curation = "essential" | "recommended" | null;
 export interface ItemSummary {
   id: string; title: string; url: string; kind: "post" | "series" | "question";
+  /** Who wrote it, with staff's correction applied. Absent where a list has no use for it. */
+  author?: string | null;
   description: string | null; summary: string | null; contentType: string | null;
   updatedAt: string | null; views: number; score: number; curation: Curation; dated: string | null;
   linkOnly: boolean; attachmentCount: number; seriesTitles: string[]; language: ItemLanguage; why?: string | null;

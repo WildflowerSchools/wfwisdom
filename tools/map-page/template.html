@@ -219,7 +219,7 @@ const snapshot = {
 
 let mcp = null, liveMap = null;
 const call = (tool, input, fresh) => mcp.callTool(SERVER, tool, input, fresh ? { cache: { refresh: true } } : undefined).then(r => r.payload);
-const liveItem = r => ({ id: r.id, title: r.title, href: r.link, type: r.type, summary: r.summary, updated: r.updated, dated: r.dated, curation: r.curation, contains: r.contains, note: r.why_here });
+const liveItem = r => ({ id: r.id, title: r.title, author: r.author, href: r.link, type: r.type, summary: r.summary, updated: r.updated, dated: r.dated, curation: r.curation, contains: r.contains, note: r.why_here });
 const typed = list => state.type ? list.filter(i => i.type === state.type) : list;
 const live = {
   live: true,
@@ -293,6 +293,7 @@ function row(i) {
   if (i.curation) m.append(el("span", "chip pick", i.curation === "essential" ? "Essential" : "Recommended"));
   if (i.fresh) m.append(el("span", "chip new", "Recently updated"));
   if (i.dated) m.append(el("span", "chip old", i.dated));
+  if (i.author) m.append(el("span", null, "By " + i.author));
   if (i.updated) m.append(el("span", null, "Updated " + fmtDate(i.updated)));
   if (i.views != null) m.append(el("span", null, i.views.toLocaleString() + " views"));
   if (i.place) m.append(el("span", null, i.place));

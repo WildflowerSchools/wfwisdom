@@ -52,7 +52,7 @@ const base = () => env.appBaseUrl;
 const link = (id: string) => `${base()}/item/${id}`;
 const typeOf = (s: ItemSummary) => s.contentType === RESOURCE_LIST ? RESOURCE_LIST : s.isSeries ? "series" : s.kind === "question" ? "question" : s.contentType ?? "other";
 const brief = (s: ItemSummary) => ({
-  id: s.id, title: s.title, type: typeOf(s), summary: s.summary ?? s.description, updated: s.updatedAt?.slice(0, 10) ?? null,
+  id: s.id, title: s.title, ...(s.author ? { author: s.author } : {}), type: typeOf(s), summary: s.summary ?? s.description, updated: s.updatedAt?.slice(0, 10) ?? null,
   curation: s.curation, dated: s.dated, language: s.language, regions: s.regions, link: link(s.id),
   ...(s.why ? { why_here: s.why } : {}), ...(s.children?.length ? { contains: s.children.map((c) => ({ id: c.id, title: c.title })) } : {}),
 });
