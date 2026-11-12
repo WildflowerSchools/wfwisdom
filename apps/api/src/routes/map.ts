@@ -1,6 +1,6 @@
 import { Router, type Request } from "express";
 import { z } from "zod";
-import { and, desc, eq, getDb, inArray, isNull, itemMeta, items, jobs, placements, signals, sql, subjobs, users } from "@wfw/db";
+import { and, desc, eq, getDb, inArray, isNull, itemFlags, itemMeta, items, jobs, placements, signals, sql, subjobs, users } from "@wfw/db";
 import { GENERAL_REGION, STAGES, isResourceLanguage, parseRegionFilter, type JobSummary, type ResourceLanguage, type StageKey } from "@wfw/shared";
 import { requireUser } from "../auth.js";
 import { getSettings } from "../settings.js";
@@ -134,7 +134,9 @@ mapRouter.get("/item/:id", async (req, res) => {
   // stored before that existed stop rendering "1. 1. 1." without waiting for a re-index.
   const stripped = dropDuplicateByline(mergeAdjacentLists(stripContentTokens(raw)), r.authorName);
   const withoutVideo = video ? stripped.replace(new RegExp(`<figure class="wf-media" data-(?:content|drive)-id="${video.key.slice(1)}">[\\s\\S]*?</figure>`, "g"), "") : stripped;
-  res.json({ item: { ...toSummary(r as ItemRow), authorName: r.authorName, publishedAt: r.publishedAt, categories: r.categories, audiences: r.audiences, bodyHtml: withoutVideo, primaryVideo: video, attachments, linkedDocs: r.linkedDocs.map((d) => ({ url: d.url, kind: d.kind, status: d.status })), contents, seriesNav, native: r.sourceKind === "native" ? { kind: r.nativeKind, googleKind: r.googleKind, googleFileId: r.googleFileId, status: r.status, author, imported: !!r.importedFrom } : null, // So a page with nothing on it can say whether the source is empty or the last import failed.
+  const [reviewed] = await db.select({ reviewedAt: itemMeta.reviewedAt, reviewedBy: itemMeta.reviewedBy }).from(itemMeta).where(eq(itemMeta.itemId, r.id));
+  const [myFlag] = req.user ? await db.select({ id: itemFlags.id }).from(itemFlags).where(and(eq(itemFlags.itemId, r.id), eq(itemFlags.userId, req.user.id), isNull(itemFlags.resolvedAt))).limit(1) : [];
+  res.json({ item: { ...toSummary(r as ItemRow), authorName: r.authorName, reviewedAt: staff ? reviewed?.reviewedAt ?? null : null, reviewedBy: staff ? reviewed?.reviewedBy ?? null : null, flagged: !!myFlag, publishedAt: r.publishedAt, categories: r.categories, audiences: r.audiences, bodyHtml: withoutVideo, primaryVideo: video, attachments, linkedDocs: r.linkedDocs.map((d) => ({ url: d.url, kind: d.kind, status: d.status })), contents, seriesNav, native: r.sourceKind === "native" ? { kind: r.nativeKind, googleKind: r.googleKind, googleFileId: r.googleFileId, status: r.status, author, imported: !!r.importedFrom } : null, // So a page with nothing on it can say whether the source is empty or the last import failed.
     importError: staff ? r.importError ?? null : null }, placements: pl, votes: { yes: votes?.yes ?? 0, no: votes?.no ?? 0, mine: mine[0]?.kind ?? null } });
 });
 

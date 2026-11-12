@@ -13,6 +13,7 @@ import { OrganizeLayout, QueuesLayout } from "./pages/admin/Groups";
 import { AdminTaxonomy } from "./pages/admin/Taxonomy";
 import { AdminCuration } from "./pages/admin/Curation";
 import { AdminRetirement } from "./pages/admin/Retirement";
+import { AdminReview } from "./pages/admin/Review";
 import { AdminTypes, AdminTypeEditor } from "./pages/admin/Types";
 import { AdminBasePrompt } from "./pages/admin/BasePrompt";
 import { AdminSubmissions, AdminSubmissionDetail } from "./pages/admin/Submissions";
@@ -67,6 +68,7 @@ export default function App() {
               <Route index element={<Navigate to="/admin/queues/contributions" replace />} />
               <Route path="contributions" element={<AdminContributions />} />
               <Route path="retirement" element={<AdminRetirement />} />
+              <Route path="review" element={<AdminReview />} />
               <Route path="submissions" element={<AdminSubmissions />} />
               <Route path="questions" element={<AdminQuestions />} />
             </Route>

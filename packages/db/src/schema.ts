@@ -176,8 +176,11 @@ export const itemMeta = pgTable("item_meta", {
   modelOutdated: boolean("model_outdated").notNull().default(false),
   modelOutdatedReason: text("model_outdated_reason"),
   reviewStatus: text("review_status").notNull().default("none"), // none | pending | keep | dated | hidden
+  /** Who last looked this over and when: a retirement decision, or a plain "I have read this and it stands". */
   reviewedBy: text("reviewed_by"),
   reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  /** The person who looks after this now, when whoever wrote it no longer can. The author is still shown. */
+  stewardUserId: uuid("steward_user_id").references(() => users.id, { onDelete: "set null" }),
   score: real("score").notNull().default(0),
   scoreComponents: jsonb("score_components").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
   scoreUpdatedAt: timestamp("score_updated_at", { withTimezone: true }),
@@ -496,3 +499,14 @@ export const mcpCalls = pgTable("mcp_calls", {
   ok: boolean("ok").notNull().default(true),
   createdAt: now(),
 }, (t) => [index("mcp_calls_created_idx").on(t.createdAt), index("mcp_calls_tool_idx").on(t.tool, t.createdAt)]);
+
+/** A reader saying a resource looks out of date or unclear. Open until a staff member reviews the resource. */
+export const itemFlags = pgTable("item_flags", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  itemId: uuid("item_id").notNull().references(() => items.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  note: text("note"),
+  createdAt: now(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  resolvedBy: text("resolved_by"),
+}, (t) => [index("item_flags_item_idx").on(t.itemId)]);

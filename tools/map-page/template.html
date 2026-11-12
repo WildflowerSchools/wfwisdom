@@ -206,7 +206,7 @@ const snapshot = {
   live: false,
   async map() {
     const counts = {}; SNAP.items.filter(snapPasses).forEach(i => { counts[i[P]] = (counts[i[P]] || 0) + 1; });
-    return SNAP.jobs.filter(j => state.old || j.key !== "archive").map(j => ({ key: j.key, name: j.name, desc: j.desc, subs: j.subs.map(s => ({ key: s.key, name: s.name, count: counts[s.key] || 0, dim: !counts[s.key] })) }));
+    return keepUsed(SNAP.jobs.filter(j => state.old || j.key !== "archive").map(j => ({ key: j.key, name: j.name, desc: j.desc, subs: j.subs.map(s => ({ key: s.key, name: s.name, count: counts[s.key] || 0 })) })));
   },
   async home() { const items = SNAP.items.filter(snapPasses); return { recent: items.slice().sort(byDate).slice(0, 6).map(i => snapItem(i, true)), used: items.slice().sort(byViews).slice(0, 6).map(i => snapItem(i, true)), start: [] }; },
   async sub(key) {
@@ -217,17 +217,32 @@ const snapshot = {
   async search() { return SNAP.items.filter(snapPasses).sort(byViews).slice(0, 60).map(i => snapItem(i, true)); },
 };
 
+/* The tree shows only what the chosen filters leave something in: a sub-job with nothing is dropped, and a
+   job left with no sub-jobs goes with it. The sub-job being read stays, so the place you are never vanishes. */
+const keepUsed = jobs => jobs.map(j => Object.assign({}, j, { subs: j.subs.filter(s => s.count > 0 || s.key === state.sel) })).filter(j => j.subs.length);
 let mcp = null, liveMap = null;
+const can = f => !!(liveMap && Array.isArray(liveMap.features) && liveMap.features.includes(f));
+/* Counts for one kind come from the server, which nests series the same way it counts them; counting the
+   cards here would disagree with it. One fetch per kind, kept for the visit. */
+const kindMaps = {};
+async function mapFor(kind) {
+  if (!kind || !can("kinds")) return liveMap;
+  if (!kindMaps[kind]) kindMaps[kind] = call("browse_map", { types: [kind] }).catch(() => { delete kindMaps[kind]; return liveMap; });
+  return kindMaps[kind];
+}
 const call = (tool, input, fresh) => mcp.callTool(SERVER, tool, input, fresh ? { cache: { refresh: true } } : undefined).then(r => r.payload);
-const liveItem = r => ({ id: r.id, title: r.title, author: r.author, href: r.link, type: r.type, summary: r.summary, updated: r.updated, dated: r.dated, curation: r.curation, contains: r.contains, note: r.why_here });
+const liveItem = r => ({ id: r.id, title: r.title, author: r.author, steward: r.steward, credit: r.credit, href: r.link, type: r.type, summary: r.summary, updated: r.updated, dated: r.dated, curation: r.curation, contains: r.contains, note: r.why_here });
 const typed = list => state.type ? list.filter(i => i.type === state.type) : list;
 const live = {
   live: true,
   async map() {
-    return liveMap.jobs.map(j => ({ key: j.key, name: j.name, desc: j.description, staff: j.staff_only || j.hidden, subs: j.subjobs.map(s => ({ key: s.key, name: s.name, count: s.resources, dim: !s.resources || (state.stage && !(s.stages || []).includes(state.stage)) })) }));
+    const m = await mapFor(state.type);
+    // A sub-job belongs to stages; one outside the chosen stage is out of the tree, whatever it holds.
+    const inStage = s => !state.stage || (s.stages || []).includes(state.stage);
+    return keepUsed(m.jobs.map(j => ({ key: j.key, name: j.name, desc: j.description, staff: j.staff_only || j.hidden, subs: j.subjobs.map(s => ({ key: s.key, name: s.name, count: inStage(s) ? s.resources : 0 })) })));
   },
   async home() { const r = await call("whats_new", { stage: state.stage || "all" }); return { recent: typed(r.recently_updated.map(liveItem)), used: typed(r.most_used.map(liveItem)), start: typed(r.start_here.map(liveItem)) }; },
-  async sub(key) { const r = await call("browse_map", { subjob_key: key }); return { job: r.job.name, name: r.subjob.name, primary: typed(r.resources.map(liveItem)), also: [] }; },
+  async sub(key) { const r = await call("browse_map", state.type && can("kinds") ? { subjob_key: key, types: [state.type] } : { subjob_key: key }); return { job: r.job.name, name: r.subjob.name, primary: typed(r.resources.map(liveItem)), also: [] }; },
   async search() { const r = await call("search_wisdom", { question: state.q, limit: 15, source: "map" }); return typed(r.results.map(liveItem)); },
 };
 let source = snapshot;
@@ -257,9 +272,10 @@ function renderJobs(jobs) {
   const bar = el("div", "treebar");
   bar.append(el("h2", null, "Jobs"), button(null, "Open all", () => { openJobs = new Set(jobs.map(j => j.key)); saveOpen(); renderJobs(jobs); }), button(null, "Close all", () => { openJobs = new Set(); saveOpen(); renderJobs(jobs); }));
   box.append(bar);
+  if (!jobs.length) box.append(el("p", "none", "Nothing matches these filters."));
   jobs.forEach(j => {
     const total = j.subs.reduce((n, s) => n + s.count, 0);
-    const node = el("details", "job" + (j.subs.every(s => s.dim) ? " empty" : ""));
+    const node = el("details", "job");
     // The job holding the sub-job being read is always unfolded, so the place you are is never hidden.
     node.open = openJobs.has(j.key) || j.subs.some(s => s.key === state.sel);
     const head = el("summary"); head.append(el("span", "name", j.name), el("span", "total", String(total)));
@@ -269,7 +285,7 @@ function renderJobs(jobs) {
     if (j.staff) node.append(el("p", "staffonly", "Staff only"));
     const ul = el("ul", "subs");
     j.subs.forEach(s => {
-      const li = el("li"), b = el("button", s.dim ? "zero" : ""); b.type = "button";
+      const li = el("li"), b = el("button", s.count ? "" : "zero"); b.type = "button";
       b.setAttribute("aria-current", String(state.sel === s.key));
       b.append(el("span", null, s.name), el("span", "c", String(s.count)));
       b.onclick = () => { openJobs.add(j.key); saveOpen(); select(s.key, true); };
@@ -293,7 +309,7 @@ function row(i) {
   if (i.curation) m.append(el("span", "chip pick", i.curation === "essential" ? "Essential" : "Recommended"));
   if (i.fresh) m.append(el("span", "chip new", "Recently updated"));
   if (i.dated) m.append(el("span", "chip old", i.dated));
-  if (i.author) m.append(el("span", null, "By " + i.author));
+  if (i.credit || i.author) m.append(el("span", null, i.steward ? i.credit : "By " + (i.author || i.credit)));
   if (i.updated) m.append(el("span", null, "Updated " + fmtDate(i.updated)));
   if (i.views != null) m.append(el("span", null, i.views.toLocaleString() + " views"));
   if (i.place) m.append(el("span", null, i.place));
@@ -405,7 +421,7 @@ async function renderReader(mine) {
   m.append(el("span", "chip", typeBadge(r.type)));
   if (r.curation) m.append(el("span", "chip pick", r.curation === "essential" ? "Essential" : "Recommended"));
   if (r.dated) m.append(el("span", "chip old", r.dated));
-  if (r.author) m.append(el("span", null, r.author.replace(/\s+/g, " ")));
+  if (r.credit || r.author) m.append(el("span", null, (r.credit || r.author).replace(/\s+/g, " ")));
   if (r.updated) m.append(el("span", null, "Updated " + fmtDate(r.updated)));
   pane.append(m);
 
@@ -454,7 +470,22 @@ async function renderReader(mine) {
     catch (e) { vote.textContent = e && (e.code === "approval_required" || e.code === "not_in_manifest" || e.code === "consent_required") ? "Recording an answer was not allowed for this page." : "That could not be recorded. Try again later."; }
   };
   vote.append(button("back", "Yes", cast(true)), button("back", "No", cast(false)));
-  foot.append(vote, outLink("Open on the Wisdom site", r.link));
+  foot.append(vote);
+  if (can("flag")) {
+    // Its own small form rather than a browser prompt, which this page cannot open.
+    const flag = el("span", "vote");
+    const start = button("back", "Flag as out of date", () => {
+      const box = el("input"); box.type = "text"; box.maxLength = 1000; box.placeholder = "What looks wrong? (optional)"; box.setAttribute("aria-label", "What looks out of date or unclear");
+      const send = button("back", "Send to staff", async () => {
+        flag.textContent = "Sending.";
+        try { await mcp.callTool(SERVER, "flag_resource", box.value.trim() ? { id: r.id, note: box.value.trim() } : { id: r.id }); flag.textContent = "Thanks. Foundation staff will take a look."; }
+        catch (e) { flag.textContent = "That could not be sent. Try again later."; }
+      });
+      flag.textContent = ""; flag.append(box, send); box.focus();
+    });
+    flag.append(start); foot.append(flag);
+  }
+  foot.append(outLink("Open on the Wisdom site", r.link));
   pane.append(foot);
 }
 
@@ -497,7 +528,10 @@ async function renderPane(mine) {
 async function refresh() {
   const mine = ++seq;
   renderStages();
-  renderJobs(await source.map());
+  const jobs = await source.map();
+  // A kind's counts are fetched, so a later choice can finish first; only the latest draws.
+  if (mine !== seq) return;
+  renderJobs(jobs);
   await renderPane(mine);
 }
 function select(key, scroll) {

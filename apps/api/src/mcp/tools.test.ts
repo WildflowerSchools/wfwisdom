@@ -29,6 +29,14 @@ describe("connector tools", () => {
     expect(r.isError).toBe(true);
   });
   // The question in the asker's own words is what keeps the log meaningful once Claude writes the search terms.
+  // Anyone can say a resource looks out of date; who looks after it and when it was reviewed is staff's to record.
+  it("lets a teacher leader flag a resource but not review it or name a steward", async () => {
+    const names = (await (await connect(teacher)).listTools()).tools.map((t) => t.name);
+    expect(names).toContain("flag_resource");
+    expect(names).not.toContain("staff_mark_reviewed");
+    const staff = (await (await connect(staffUser)).listTools()).tools.map((t) => t.name);
+    expect(staff).toEqual(expect.arrayContaining(["staff_review_list", "staff_mark_reviewed", "staff_set_steward", "staff_people"]));
+  });
   it("requires the question on every search", async () => {
     const tools = (await (await connect(teacher)).listTools()).tools;
     const search = tools.find((t) => t.name === "search_wisdom")!;

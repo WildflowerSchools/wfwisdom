@@ -86,6 +86,10 @@ renewed for up to ninety days) and stores only their hashes.
 - `staff_gap_report` in Claude pulls these together: questions not answered, searches that found nothing,
   most-cited resources, tool use.
 
+- `staff_review_list` is every published resource by how long since it was last reviewed, with its author,
+  steward and open flags. `staff_mark_reviewed` and `staff_set_steward` record the outcome, and any
+  connected person can raise a flag with `flag_resource`. See "Stewards, reviews and flags" in the admin guide.
+
 Two limits to be honest about. A question is recorded only if Claude calls `log_question`; the skills and
 the connector's own instructions tell it to, but it is not enforced. And drafts sent for review never
 reach Wisdom, so there is no record of reviews beyond the `get_review_guide` call.
@@ -132,3 +136,9 @@ the connector re-reads its Google file if that has changed, exactly as opening i
   Claude speaks only when someone opens a conversation; a notice would be email, using the scheduler and
   Resend that are already here.
 - Creating a series, or editing a published resource's text, from Claude. Use the admin pages.
+
+`tools/review-page` is the staff review list, a second artifact. It is one static file with no build
+step, and it calls `staff_review_list`, `staff_people`, `staff_mark_reviewed` and `staff_set_steward`,
+so a teacher leader who opens it sees nothing. The map page asks `browse_map` what the server can do
+(`features`) before offering the kind-filtered counts or the flag button, so a page published ahead of a
+deploy does not offer what the server cannot yet answer.

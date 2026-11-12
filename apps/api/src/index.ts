@@ -15,6 +15,7 @@ import { logger } from "./logger.js";
 import { OpenAIError } from "./lib/openai.js";
 import { mountConnector } from "./mcp/index.js";
 import { adminRouter } from "./routes/admin.js";
+import { flagRouter, reviewRouter } from "./routes/stewardship.js";
 import { authRouter } from "./routes/auth.js";
 import { filesRouter } from "./routes/files.js";
 import { adminFeedbackRouter, feedbackRouter } from "./routes/feedback.js";
@@ -65,6 +66,8 @@ app.use("/api/search", searchRouter);
 app.use("/api/signals", signalsRouter);
 app.use("/api/types", typesRouter);
 app.use("/api/submissions", submissionsRouter);
+app.use("/api/admin/review", reviewRouter);
+app.use("/api/flags", flagRouter);
 app.use("/api/admin", adminRouter);
 
 const webDist = resolve(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
