@@ -46,7 +46,34 @@ export async function driveMeta(id: string): Promise<DriveMeta | null> {
 }
 
 /** Exported content for a Google file: HTML for docs, a table for sheets, text (plus an embed) for slides. */
-export async function exportGoogle(kind: GoogleKind, id: string, mime?: string | null): Promise<{ status: "ok" | "private" | "error"; text: string; html: string; title: string | null }> {
+export type EmbeddedImages = Map<string, { buf: Buffer; mime: string }>;
+const EMBEDDED = "https://embedded.wisdom.invalid/";
+const EMBEDDED_IMG = /<img\b[^>]*?\bsrc="https:\/\/embedded\.wisdom\.invalid\/[^"]*"[^>]*>/g;
+/**
+ * Take the pictures a Google export carries inside itself out of the HTML.
+ *
+ * Read through the Drive API, a Doc's pictures are not addresses but the image itself, written into the
+ * src as data. The sanitizer allows only http(s), so every such picture was dropped before anything
+ * could keep a copy: a Doc with a header image came in with none. Each is swapped for a stand-in address
+ * named by the hash of its bytes, which survives sanitizing and which mirrorImages resolves from the
+ * returned map instead of fetching. Allowing data: through the sanitizer was the alternative; it would
+ * have put megabytes of base64 into body_html and every saved version wherever mirroring did not run.
+ * Raster types only: these are later served from Wisdom's own address, where an SVG could carry script.
+ */
+export function liftEmbeddedImages(html: string): { html: string; embedded: EmbeddedImages } {
+  const embedded: EmbeddedImages = new Map();
+  const out = html.replace(/(<img\b[^>]*?\bsrc=")data:(image\/(?:png|jpe?g|gif|webp));base64,([A-Za-z0-9+\/=\s]+)"/gi, (whole, pre: string, mime: string, b64: string) => {
+    const buf = Buffer.from(b64, "base64"); if (!buf.length || buf.length > MAX_IMAGE_BYTES) return whole;
+    const hash = createHash("sha256").update(buf).digest("hex"); embedded.set(hash, { buf, mime: mime.toLowerCase() });
+    return `${pre}${EMBEDDED}${hash}"`;
+  });
+  return { html: out, embedded };
+}
+/** Drop pictures still at a stand-in address: nothing is behind it, so it would only ever show as broken. */
+export const dropEmbeddedImages = (html: string): string => html.replace(EMBEDDED_IMG, "").replace(/<p>\s*<\/p>/g, "");
+export const hasEmbeddedImages = (html: string): boolean => html.includes(EMBEDDED);
+
+export async function exportGoogle(kind: GoogleKind, id: string, mime?: string | null): Promise<{ status: "ok" | "private" | "error"; text: string; html: string; title: string | null; embedded?: EmbeddedImages }> {
   const h = await authHeaders();
   const fetchExport = async (mimeType: string, pub: string) => {
     if (h.Authorization) { const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=${encodeURIComponent(mimeType)}`, { headers: h }); if (r.ok) return { ok: true as const, body: await r.text() }; if (r.status === 403 || r.status === 404) return { ok: false as const, status: "private" as const }; }
@@ -58,12 +85,12 @@ export async function exportGoogle(kind: GoogleKind, id: string, mime?: string |
     const r = await fetchExport("text/html", "export?format=html"); if (!r.ok) return { status: r.status, text: "", html: "", title: null };
     // Emphasis is promoted from the export's own stylesheet before the body is taken out of the document:
     // Google keeps the styles in the head, and the sanitizer drops style attributes, so bold was being lost.
-    const body = unwrapGoogleLinks(promoteGoogleEmphasis(r.body));
-    const html = mergeAdjacentLists(sanitizeBody(body).replace(/<p>\s*<\/p>/g, ""));
+    const lifted = liftEmbeddedImages(unwrapGoogleLinks(promoteGoogleEmphasis(r.body)));
+    const html = mergeAdjacentLists(sanitizeBody(lifted.html).replace(/<p>\s*<\/p>/g, ""));
     const text = normalizeWs(stripHtml(html)).slice(0, 400_000);
     // The export carries no <title>; the first line of the document is the best public fallback.
     const title = /<title[^>]*>([^<]{1,200})<\/title>/i.exec(r.body)?.[1]?.trim() || text.split("\n").find((l) => l.trim().length > 2)?.trim().slice(0, 120) || null;
-    return { status: "ok", text, html, title };
+    return { status: "ok", text, html, title, embedded: lifted.embedded };
   }
   if (kind === "spreadsheets") {
     const r = await fetchExport("text/csv", "export?format=csv"); if (!r.ok) return { status: r.status, text: "", html: "", title: null };
@@ -187,13 +214,16 @@ async function storeImage(buf: Buffer, mime: string, hash: string): Promise<stri
  * picture is fetched, and stored once: `existing` is what the item already has, matched by a hash of the
  * image, so re-reading a document whose header has not changed uploads nothing. A picture that cannot
  * be fetched keeps its original address: a picture that may break later is better than none now.
+ * `embedded` holds the pictures the export carried inside itself (see liftEmbeddedImages); one that
+ * cannot be stored keeps its stand-in address, which the caller must drop or refuse, never store.
  */
-export async function mirrorImages(html: string, existing: InlineImage[], io: { fetch: typeof fetchImage; store: typeof storeImage } = { fetch: fetchImage, store: storeImage }): Promise<{ html: string; images: InlineImage[] }> {
+export async function mirrorImages(html: string, existing: InlineImage[], io: { fetch: typeof fetchImage; store: typeof storeImage } = { fetch: fetchImage, store: storeImage }, embedded: EmbeddedImages = new Map()): Promise<{ html: string; images: InlineImage[] }> {
   const srcs = [...new Set([...html.matchAll(/<img\b[^>]*?\bsrc="(https?:\/\/[^"]+)"/g)].map((m) => m[1]!))].slice(0, MAX_IMAGES);
   const images = [...existing]; let out = html;
   for (const src of srcs) {
     try {
-      const got = await io.fetch(src.replace(/&amp;/g, "&")); if (!got) continue;
+      // A stand-in for a picture the export carried inside itself: the bytes are already in hand.
+      const got = src.startsWith(EMBEDDED) ? embedded.get(src.slice(EMBEDDED.length)) ?? null : await io.fetch(src.replace(/&amp;/g, "&")); if (!got) continue;
       const hash = createHash("sha256").update(got.buf).digest("hex");
       let img = images.find((i) => i.hash === hash);
       if (!img) { img = { hash, driveId: await io.store(got.buf, got.mime, hash), mime: got.mime, bytes: got.buf.length }; images.push(img); }
@@ -295,7 +325,7 @@ export function markdownToHtml(md: string): string {
   return sanitizeBody(out.join("\n"));
 }
 
-export interface NativeContent { text: string; html: string; hash: string; modifiedAt: Date | null; status: "ok" | "private" | "error"; title?: string | null; mime?: string | null }
+export interface NativeContent { text: string; html: string; hash: string; modifiedAt: Date | null; status: "ok" | "private" | "error"; title?: string | null; mime?: string | null; embedded?: EmbeddedImages }
 /** Read the current content of a native item from wherever it lives. */
 export async function readNativeContent(it: { nativeKind: string | null; googleFileId: string | null; googleKind: string | null; driveMime: string | null; bodyMarkdown: string | null; title: string }): Promise<NativeContent> {
   if (it.nativeKind === "google" || it.nativeKind === "file") {
@@ -303,7 +333,7 @@ export async function readNativeContent(it: { nativeKind: string | null; googleF
     let kind = (it.googleKind ?? "file") as GoogleKind; const mime = meta?.mimeType ?? it.driveMime ?? null;
     if (meta && GOOGLE_APPS[meta.mimeType]) kind = GOOGLE_APPS[meta.mimeType]!;
     const ex = await exportGoogle(kind, it.googleFileId!, mime);
-    return { text: ex.text, html: ex.html, hash: sha(`${ex.text}|${ex.html}`), modifiedAt: meta?.modifiedTime ? new Date(meta.modifiedTime) : null, status: ex.status, title: meta?.name ?? ex.title ?? null, mime };
+    return { text: ex.text, html: ex.html, hash: sha(`${ex.text}|${ex.html}`), modifiedAt: meta?.modifiedTime ? new Date(meta.modifiedTime) : null, status: ex.status, title: meta?.name ?? ex.title ?? null, mime, embedded: ex.embedded };
   }
   if (it.nativeKind === "text") { const html = markdownToHtml(it.bodyMarkdown ?? ""); const text = normalizeWs(stripHtml(html)); return { text, html, hash: sha(text), modifiedAt: null, status: "ok" }; }
   return { text: "", html: "", hash: sha(it.title), modifiedAt: null, status: "ok" };
@@ -329,9 +359,12 @@ export async function refreshNativeItem(itemId: string, by = "system"): Promise<
   // Only where there is a Drive to keep them in, and never at the cost of the refresh itself.
   let inlineImages = it.inlineImages ?? [];
   if (it.nativeKind === "google" && env.googleSharedDriveId && /<img\b[^>]*?\bsrc="https?:/.test(read.html)) {
-    try { const m = await mirrorImages(read.html, inlineImages); read = { ...read, html: m.html }; inlineImages = m.images; }
+    try { const m = await mirrorImages(read.html, inlineImages, undefined, read.embedded); read = { ...read, html: m.html }; inlineImages = m.images; }
     catch (e) { logger.warn({ err: (e as Error).message, itemId }, "document pictures were left at their Google addresses"); }
   }
+  // Whatever could not be kept (no Drive, or the upload failed) is left out; the next refresh tries again.
+  if (hasEmbeddedImages(read.html)) read = { ...read, html: dropEmbeddedImages(read.html) };
+  const { embedded: _bytes, ...rest } = read; read = rest;
   // Imported items carry their own intro (the old post's words) and the text of their files; both stay searchable.
   const introText = it.introHtml ? normalizeWs(stripHtml(it.introHtml)) : "";
   const text = [introText, read.text, it.attachmentText ?? ""].filter(Boolean).join("\n\n").slice(0, 400_000);

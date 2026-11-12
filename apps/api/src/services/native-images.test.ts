@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mirrorImages, type InlineImage } from "./native.js";
+import { dropEmbeddedImages, hasEmbeddedImages, liftEmbeddedImages, mirrorImages, type InlineImage } from "./native.js";
 
 const A = "https://lh7-rt.googleusercontent.com/docsz/AAA?key=1&amp;x=2", B = "https://lh7-rt.googleusercontent.com/docsz/BBB?key=1";
 const html = `<p><img src="${A}" alt="Header"></p><p>Text</p><p><img src="${B}"></p><p><img src="${A}"></p><p><img src="/api/files/native/already"></p>`;
@@ -37,5 +37,35 @@ describe("keeping copies of a document's pictures", () => {
     const x = io({});
     const r = await mirrorImages('<p>Words</p><img src="/api/files/native/abc">', [], x);
     expect(x.fetched).toEqual([]); expect(r.html).toBe('<p>Words</p><img src="/api/files/native/abc">');
+  });
+  // Read through the Drive API, a Doc's pictures arrive as data inside the HTML, not as addresses.
+  describe("pictures the export carries inside itself", () => {
+    const png = Buffer.from("header-bytes").toString("base64");
+    const doc = `<p><img alt="Header" src="data:image/png;base64,${png}"></p><p>Text</p><p><img src="data:image/svg+xml;base64,${png}"></p>`;
+    it("swaps each for a stand-in address and keeps the bytes", () => {
+      const l = liftEmbeddedImages(doc);
+      expect(l.embedded.size).toBe(1);
+      const [hash, img] = [...l.embedded][0]!;
+      expect(img).toEqual({ buf: Buffer.from("header-bytes"), mime: "image/png" });
+      expect(l.html).toContain(`<img alt="Header" src="https://embedded.wisdom.invalid/${hash}">`);
+      // Not a raster type, so it is left for the sanitizer to drop.
+      expect(l.html).toContain("data:image/svg+xml");
+    });
+    it("stores them without fetching, and once for the same picture", async () => {
+      const l = liftEmbeddedImages(`<img src="data:image/png;base64,${png}"><img src="data:image/png;base64,${png}">`);
+      const x = io({});
+      const r = await mirrorImages(l.html, [], x, l.embedded);
+      expect(x.fetched).toEqual([]); expect(x.stored).toHaveLength(1);
+      expect(r.html).toBe('<img src="/api/files/native/drive1"><img src="/api/files/native/drive1">');
+      expect(hasEmbeddedImages(r.html)).toBe(false);
+      const again = await mirrorImages(l.html, r.images, x, l.embedded);
+      expect(x.stored).toHaveLength(1); expect(again.html).toBe(r.html);
+    });
+    it("leaves a stand-in it has no bytes for, which the caller can drop", async () => {
+      const l = liftEmbeddedImages(`<p>Words</p><p><img src="data:image/png;base64,${png}"></p>`);
+      const r = await mirrorImages(l.html, [], io({}));
+      expect(hasEmbeddedImages(r.html)).toBe(true);
+      expect(dropEmbeddedImages(r.html)).toBe("<p>Words</p>");
+    });
   });
 });

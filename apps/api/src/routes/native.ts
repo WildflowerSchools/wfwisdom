@@ -5,7 +5,7 @@ import { and, desc, eq, getDb, inArray, itemMeta, itemVersions, items, jobs, pla
 import { actor, requireStaff, requireUser } from "../auth.js";
 import { extractText } from "../lib/extract.js";
 import { embedItems, summarizeItems } from "../services/indexer.js";
-import { copyToWisdomDrive, driveDownload, driveMeta, exportGoogle, googleUrl, inWisdomDrive, mirrorImages, guessMime, isGoogleAppsMime, markdownToHtml, parseGoogleLink, readNativeContent, refreshNativeItem, snapshotIfChanged, toNodeStream, uploadToDrive, type GoogleKind, type NativeKind } from "../services/native.js";
+import { copyToWisdomDrive, driveDownload, driveMeta, exportGoogle, googleUrl, inWisdomDrive, mirrorImages, guessMime, hasEmbeddedImages, isGoogleAppsMime, markdownToHtml, parseGoogleLink, readNativeContent, refreshNativeItem, snapshotIfChanged, toNodeStream, uploadToDrive, type GoogleKind, type NativeKind } from "../services/native.js";
 import { resolveLanguage } from "../services/language.js";
 import { getSettings } from "../settings.js";
 import { loadVectors } from "../services/vectors.js";
@@ -130,9 +130,9 @@ export async function detachToHeld(id: string, by: string): Promise<{ formerGoog
   if (read.status !== "ok") throw new Error(read.status === "private" ? "Wisdom can no longer read that Google Doc, so it cannot bring the content in. Share it with Wisdom again first." : "Google did not return the document. Try again in a moment.");
   let html = read.html; let inlineImages = it.inlineImages ?? [];
   if (/<img\b[^>]*?\bsrc="https?:/.test(html)) {
-    const m = await mirrorImages(html, inlineImages); html = m.html; inlineImages = m.images;
-    // A picture still at a Google address will break once the link is cut. Better to stop than to hold a page that loses its header next week.
-    if (/<img\b[^>]*?\bsrc="https?:\/\/[^"]*google/.test(html)) throw new Error("Wisdom could not keep a copy of every picture in the document, so it was left linked. Try again; if it keeps failing, the picture may be too large.");
+    const m = await mirrorImages(html, inlineImages, undefined, read.embedded); html = m.html; inlineImages = m.images;
+    // A picture still at a Google address will break once the link is cut, and one still at a stand-in address was never stored at all. Better to stop than to hold a page that loses its header.
+    if (/<img\b[^>]*?\bsrc="https?:\/\/[^"]*google/.test(html) || hasEmbeddedImages(html)) throw new Error("Wisdom could not keep a copy of every picture in the document, so it was left linked. Try again; if it keeps failing, the picture may be too large.");
   }
   const markdown = htmlToMarkdown(html);
   if (!markdown.trim()) throw new Error("The document came back empty, so it was left linked.");
@@ -154,21 +154,34 @@ const OPEN_CHECK_MS = 5 * 60_000;
  * most once every five minutes however many people open it. The caller decides how long to wait: a
  * reader gets the page either way, fresh if Google answered in time.
  */
-export async function refreshOnOpen(id: string): Promise<boolean> {
+export async function refreshOnOpen(id: string, onStale?: () => void): Promise<boolean> {
   const db = getDb();
   // Claiming the check and testing whether one is due are a single statement, so ten people opening the same page cause one check.
   const [it] = await db.update(items).set({ indexedAt: new Date() }).where(and(eq(items.id, id), eq(items.sourceKind, "native"), eq(items.status, "published"), sql`${items.nativeKind} in ('google','file')`, sql`${items.googleFileId} is not null`, sql`(${items.indexedAt} is null or ${items.indexedAt} < ${new Date(Date.now() - OPEN_CHECK_MS)})`)).returning({ googleFileId: items.googleFileId, nativeModifiedAt: items.nativeModifiedAt });
   if (!it?.googleFileId) return false;
   const meta = await driveMeta(it.googleFileId);
   if (!meta?.modifiedTime || (it.nativeModifiedAt && new Date(meta.modifiedTime).getTime() <= it.nativeModifiedAt.getTime())) return false;
+  onStale?.();
   const r = await refreshNativeItem(id, "refresh on open");
   // Search catches up behind the reader; nobody waits on an embedding to see a page.
   if (r.changed) void publishNative(id).catch((e: Error) => logger.warn({ err: e.message, itemId: id }, "re-indexing after a refresh on open failed"));
   return r.changed;
 }
-/** refreshOnOpen, for at most `ms`: the page is served on time whether or not Google has answered. */
-export async function freshenBriefly(id: string, ms = 3000): Promise<void> {
-  await Promise.race([refreshOnOpen(id).catch((e: Error) => { logger.warn({ err: e.message, itemId: id }, "refresh on open failed"); }), new Promise((r) => setTimeout(r, ms).unref())]);
+/**
+ * refreshOnOpen, for a bounded time: the page is served whether or not Google has answered.
+ *
+ * Asking Drive whether the file changed gets `ms`. Once it says yes, the re-read gets until `staleMs`:
+ * exporting a document, keeping its pictures and checking its language took longer than three seconds
+ * in practice, so the person who opened an edited resource was served the old copy and only the next
+ * open was right. Waiting longer is paid only by the first open after an edit, which is the one open
+ * that would otherwise be wrong.
+ */
+export async function freshenBriefly(id: string, ms = 3000, staleMs = 15_000): Promise<void> {
+  let stale = false;
+  const work = refreshOnOpen(id, () => { stale = true; }).catch((e: Error) => { logger.warn({ err: e.message, itemId: id }, "refresh on open failed"); });
+  const wait = (n: number) => new Promise((r) => setTimeout(r, n).unref());
+  await Promise.race([work, wait(ms)]);
+  if (stale) await Promise.race([work, wait(Math.max(0, staleMs - ms))]);
 }
 
 /** Turn a page written here into a Google Doc in the Wisdom Drive, so it can be edited like everything else. Throws with a message for the person. */
