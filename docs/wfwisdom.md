@@ -148,8 +148,9 @@ configuration, not secrets. Rotation steps are in
 [`docs/admin-guide.md` § Secrets and how to rotate keys](admin-guide.md#secrets-and-how-to-rotate-keys),
 and `node scripts/check-secrets.mjs` checks the Drive ones.
 
-Code lives at `matthewlkramer/wfwisdom` on GitHub — a personal account as of this writing, with a
-`WildflowerSchools` organization available to move it to.
+Code lives at `WildflowerSchools/wfwisdom` on GitHub. It was moved there from the personal account
+`matthewlkramer/wfwisdom` in November 2026; the old address redirects for reads, but a tool given
+access to the repo only under its new name is refused a push to the old one, so point remotes at the new.
 
 ## Known gaps
 
