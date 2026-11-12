@@ -25,6 +25,7 @@ export const ORGANIZE_TABS: GroupTab[] = [
 export const QUEUE_TABS: GroupTab[] = [
   { to: "/admin/queues/contributions", label: "Contributions" },
   { to: "/admin/queues/retirement", label: "Retirement queue" },
+  { to: "/admin/queues/review", label: "Review list" },
   { to: "/admin/queues/submissions", label: "Submission log" },
   { to: "/admin/queues/questions", label: "Questions" },
 ];

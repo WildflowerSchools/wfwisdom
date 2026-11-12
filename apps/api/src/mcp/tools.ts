@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { and, asc, auditLog, chatTurnNotes, chatTurns, desc, eq, getDb, gt, inArray, itemMeta, items, jobs, materialTypes, mcpCalls, placements, searchLog, signals, sql, subjobs, typeResources, users } from "@wfw/db";
-import { DOC_TYPES, STAGES, type ItemSummary, type SessionUser, type StageKey } from "@wfw/shared";
+import { DOC_TYPES, STAGES, creditLine, type ItemSummary, type SessionUser, type StageKey } from "@wfw/shared";
 import { env } from "../env.js";
 import { dropDuplicateByline, mergeAdjacentLists, stripContentTokens } from "../lib/html.js";
 import { logger } from "../logger.js";
@@ -16,6 +16,7 @@ import { currentBasePrompt } from "../services/review.js";
 import { schoolContext } from "../services/school.js";
 import { retrievePassages, search } from "../services/search.js";
 import { recordSignal } from "../services/signals.js";
+import { flagItem, markReviewed, reviewList, setSteward, stewardCandidates } from "../services/stewardship.js";
 import { getSettings } from "../settings.js";
 import { connectedUserCount } from "./oauth.js";
 import { createUploadLink } from "./upload.js";
@@ -52,7 +53,7 @@ const base = () => env.appBaseUrl;
 const link = (id: string) => `${base()}/item/${id}`;
 const typeOf = (s: ItemSummary) => s.contentType === RESOURCE_LIST ? RESOURCE_LIST : s.isSeries ? "series" : s.kind === "question" ? "question" : s.contentType ?? "other";
 const brief = (s: ItemSummary) => ({
-  id: s.id, title: s.title, type: typeOf(s), summary: s.summary ?? s.description, updated: s.updatedAt?.slice(0, 10) ?? null,
+  id: s.id, title: s.title, ...(s.author ? { author: s.author } : {}), ...(s.steward ? { steward: s.steward } : {}), ...(creditLine(s.author, s.steward) ? { credit: creditLine(s.author, s.steward) } : {}), type: typeOf(s), summary: s.summary ?? s.description, updated: s.updatedAt?.slice(0, 10) ?? null,
   curation: s.curation, dated: s.dated, language: s.language, regions: s.regions, link: link(s.id),
   ...(s.why ? { why_here: s.why } : {}), ...(s.children?.length ? { contains: s.children.map((c) => ({ id: c.id, title: c.title })) } : {}),
 });
@@ -179,7 +180,7 @@ export function buildServer(user: SessionUser): McpServer {
     if (offset === 0) await recordSignal(user.id, r.id, "click", { via: "connector" }).catch((e: Error) => logger.warn({ err: e.message }, "connector click signal failed"));
     const s = toSummary(r as ItemRow);
     return { detail: { id: r.id }, data: {
-      ...brief(s), author: r.authorName, published: r.publishedAt ? new Date(r.publishedAt).toISOString().slice(0, 10) : null, original: r.url,
+      ...brief(s), author: r.authorName, ...(creditLine(r.authorName, s.steward) ? { credit: creditLine(r.authorName, s.steward) } : {}), published: r.publishedAt ? new Date(r.publishedAt).toISOString().slice(0, 10) : null, original: r.url,
       ...(a.format === "html" && r.bodyHtml ? { body_html: (await readerHtml(r.bodyHtml, r.authorName, staff)).slice(0, 400_000) } : {}),
       text: part, text_from: offset, text_total_chars: text.length, ...(offset + part.length < text.length ? { next_offset: offset + part.length } : {}),
       files, linked_documents: r.linkedDocs.map((d) => ({ url: d.url, kind: d.kind, readable: d.status === "ok" })), ...(contains.length ? { contains } : {}),
@@ -193,20 +194,27 @@ export function buildServer(user: SessionUser): McpServer {
   server.registerTool("browse_map", {
     title: "Browse by job",
     description: "The library organized by the job in front of a teacher leader. With no arguments, returns every job and its sub-jobs with how many resources each holds. With subjob_key, returns the resources placed in that sub-job, best first.",
-    inputSchema: { subjob_key: z.string().max(120).optional().describe("A sub-job key from the map, such as board.meetings.") },
+    inputSchema: {
+      subjob_key: z.string().max(120).optional().describe("A sub-job key from the map, such as board.meetings."),
+      types: z.array(z.enum(TYPE_KEYS)).max(13).optional().describe("Only count, or only list, these kinds of resource."),
+    },
     annotations: READ,
   }, run("browse_map", async (a) => {
+    // The kind filter narrows the counts as well as the lists, so a number beside a job is the number of cards under it.
+    const f = { ...reader, ...(a.types?.length ? { types: a.types } : {}) };
     const db = getDb();
     if (a.subjob_key) {
       const [row] = await db.select({ sub: subjobs, job: jobs }).from(subjobs).innerJoin(jobs, eq(jobs.id, subjobs.jobId)).where(eq(subjobs.key, a.subjob_key));
       // A staff-only or hidden job is not on a teacher leader's map, so its sub-jobs are not reachable by key either.
       if (!row || (!staff && (row.job.hidden || row.job.staffOnly))) throw new ToolError("There is no sub-job with that key. Call browse_map with no arguments to see the keys.");
-      const list = await itemsForSubjob(row.sub.id, staff, reader);
+      const list = await itemsForSubjob(row.sub.id, staff, f);
       return { detail: { subjob: a.subjob_key }, data: { job: { key: row.job.key, name: row.job.name }, subjob: { key: row.sub.key, name: row.sub.name, description: row.sub.description, stages: row.sub.stages }, resources: list.map(brief) } };
     }
-    const [js, ss, counts, me] = await Promise.all([db.select().from(jobs).orderBy(jobs.sort), db.select().from(subjobs).orderBy(subjobs.sort), subjobItemCounts(staff, reader), db.select({ stage: users.stage }).from(users).where(eq(users.id, user.id))]);
+    const [js, ss, counts, me] = await Promise.all([db.select().from(jobs).orderBy(jobs.sort), db.select().from(subjobs).orderBy(subjobs.sort), subjobItemCounts(staff, f), db.select({ stage: users.stage }).from(users).where(eq(users.id, user.id))]);
     return { data: {
       stages: STAGES, my_stage: isStage(me[0]?.stage) ? me[0]!.stage : null,
+      // What this server can do beyond the first release, so the map page offers only what will work against it.
+      features: ["kinds", "flag", "credit"],
       jobs: js.filter((j) => staff || (!j.hidden && !j.staffOnly)).map((j) => ({ key: j.key, name: j.name, description: j.description, ...(j.staffOnly ? { staff_only: true } : {}), ...(j.hidden ? { hidden: true } : {}),
         subjobs: ss.filter((s) => s.jobId === j.id).map((s) => ({ key: s.key, name: s.name, description: s.description, stages: s.stages, resources: counts.get(s.id) ?? 0 })) })),
     } };
@@ -322,6 +330,17 @@ export function buildServer(user: SessionUser): McpServer {
     if (!(await itemsByIds([a.id], staff)).has(a.id)) throw new ToolError("That resource is not in the library.");
     await recordSignal(user.id, a.id, a.helpful ? "helpful_yes" : "helpful_no", { via: "connector" });
     return { data: { recorded: true }, detail: { id: a.id, helpful: a.helpful } };
+  }));
+
+  server.registerTool("flag_resource", {
+    title: "Flag a resource as out of date",
+    description: "Tell Foundation staff that a resource looks out of date, wrong or unclear. Only call when the person has said so. Pass what they said is wrong as the note.",
+    inputSchema: { id: z.string().uuid(), note: z.string().max(1000).optional().describe("What looks out of date or unclear, in the person's words.") },
+    annotations: { ...WRITE, idempotentHint: true },
+  }, run("flag_resource", async (a) => {
+    if (!(await itemsByIds([a.id], staff)).has(a.id)) throw new ToolError("That resource is not in the library.");
+    await flagItem(a.id, user.id, a.note ?? null);
+    return { data: { flagged: true }, detail: { id: a.id } };
   }));
 
   // ---- adding to the library
@@ -487,6 +506,54 @@ export function buildServer(user: SessionUser): McpServer {
     if (!Object.keys(patch).length) throw new ToolError("Nothing to change.");
     await applyMetaPatch(a.id, patch, actor);
     return { detail: { id: a.id, fields: Object.keys(patch) }, data: { id: a.id, changed: Object.keys(patch), link: link(a.id) } };
+  }));
+
+  server.registerTool("staff_review_list", {
+    title: "Staff: resources by time since last review",
+    description: "Every published resource, the longest unreviewed first: its author, its steward (who looks after it now), when and by whom it was last reviewed, and any open flags from readers. Set mine to see only those this staff member wrote or stewards. Nothing is reviewed automatically; this is the list staff work from.",
+    inputSchema: {
+      mine: z.boolean().optional().describe("Only resources this person wrote or is the steward of."),
+      flagged: z.boolean().optional().describe("Only resources a reader has flagged."),
+      limit: z.number().int().min(1).max(2000).optional().describe("Default 40. The review page asks for all of them."),
+      offset: z.number().int().min(0).optional(),
+    },
+    annotations: READ,
+  }, run("staff_review_list", async (a) => {
+    let rows = await reviewList(user, { mine: a.mine });
+    if (a.flagged) rows = rows.filter((r) => r.flags > 0);
+    const from = a.offset ?? 0, page = rows.slice(from, from + (a.limit ?? 40));
+    return { detail: { total: rows.length }, data: { total: rows.length, offset: from, resources: page.map((r) => ({
+      id: r.id, title: r.title, type: r.type, author: r.author, steward: r.steward, mine: r.mine, updated: r.updatedAt?.slice(0, 10) ?? null,
+      last_reviewed: r.reviewedAt?.slice(0, 10) ?? null, reviewed_by: r.reviewedBy?.replace(/\s*<[^>]*>$/, "") ?? null,
+      ...(r.flags ? { flags: r.flags, flag_note: r.flagNote } : {}), ...(r.hidden ? { hidden: true } : {}), ...(r.dated ? { dated: r.dated } : {}), on_the_map: r.place, link: link(r.id),
+    })) } };
+  }));
+
+  server.registerTool("staff_people", {
+    title: "Staff: who can be a steward",
+    description: "Foundation staff who have signed in to Wisdom, for choosing a steward.",
+    inputSchema: {},
+    annotations: READ,
+  }, run("staff_people", async () => ({ data: { people: (await stewardCandidates()).map((p) => ({ name: p.name, email: p.email })) } })));
+
+  server.registerTool("staff_mark_reviewed", {
+    title: "Staff: mark a resource as reviewed",
+    description: "Record that this staff member has read a resource and it stands as it is, today. Closes any open flags on it. Use after any needed change has been made, or when none is needed. Confirm with the staff member first.",
+    inputSchema: { id: z.string().uuid(), note: z.string().max(500).optional().describe("What was checked or changed, for the record.") },
+    annotations: { ...WRITE, idempotentHint: true },
+  }, run("staff_mark_reviewed", async (a) => {
+    const r = await markReviewed(a.id, actor, a.note ?? null);
+    return { detail: { id: a.id }, data: { id: a.id, last_reviewed: r.reviewedAt.slice(0, 10), flags_closed: r.flagsClosed } };
+  }));
+
+  server.registerTool("staff_set_steward", {
+    title: "Staff: give a resource a steward",
+    description: "Name the person who looks after a resource now, for when its author has left Wildflower or moved on. The author stays as written and both are shown: originally created by the author; stewarded by the steward. Pass the steward's email, or null to remove the steward. Confirm with the staff member first.",
+    inputSchema: { id: z.string().uuid(), steward_email: z.string().email().max(200).nullable() },
+    annotations: { ...WRITE, idempotentHint: true },
+  }, run("staff_set_steward", async (a) => {
+    const r = await setSteward(a.id, { email: a.steward_email }, actor);
+    return { detail: { id: a.id, steward: r.steward }, data: { id: a.id, steward: r.steward, link: link(a.id) } };
   }));
 
   server.registerTool("staff_move_resource", {

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wildflower Wisdom: review list</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Layout: a teal band with the title and the filters; below it one wide table, longest unreviewed first, that turns into stacked cards on a phone. Same palette and type as the map page. */
+  --bg: #f4f6f2; --surface: #ffffff; --ink: #294844; --muted: #566c66; --line: #cbdad4;
+  --accent: #137070; --accent-pale: #e1f3f0; --on-accent: #fffdf8;
+  --band: #137070; --on-band: #ffffff; --band-soft: rgba(255,255,255,.16);
+  --mark: #c9531a; --sun: #f7d538; --warn-bg: #fff4d6; --warn: #795600;
+  --display: "EB Garamond", Garamond, "Times New Roman", serif;
+  --body: "Avenir Next", Avenir, "Helvetica Neue", Arial, sans-serif;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1c1b; --surface: #172927; --ink: #dcebe7; --muted: #9bb3ad; --line: #2c4541;
+    --accent: #6fd0c6; --accent-pale: #1d3a37; --on-accent: #0c1e1c;
+    --band: #12302e; --on-band: #e6f2ef; --band-soft: rgba(255,255,255,.1);
+    --mark: #f59a62; --warn-bg: #3a3010; --warn: #f0d37a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1c1b; --surface: #172927; --ink: #dcebe7; --muted: #9bb3ad; --line: #2c4541;
+  --accent: #6fd0c6; --accent-pale: #1d3a37; --on-accent: #0c1e1c;
+  --band: #12302e; --on-band: #e6f2ef; --band-soft: rgba(255,255,255,.1);
+  --mark: #f59a62; --warn-bg: #3a3010; --warn: #f0d37a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.45; font-synthesis: none; }
+button, input, select { font: inherit; color: inherit; }
+:is(a, button, input, select):focus-visible { outline: 2px solid var(--sun); outline-offset: 2px; }
+a { color: var(--accent); }
+.band { background: var(--band); color: var(--on-band); padding: 22px clamp(16px, 4vw, 40px) 18px; }
+.band h1 { font-family: var(--display); font-weight: 600; font-size: clamp(1.6rem, 3.2vw, 2.1rem); margin: 0 0 4px; text-wrap: balance; }
+.band p { margin: 0 0 14px; max-width: 70ch; opacity: .92; }
+.filters { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.seg { display: inline-flex; background: var(--band-soft); border-radius: 999px; padding: 3px; }
+.seg button { border: 0; background: transparent; color: var(--on-band); padding: 6px 14px; border-radius: 999px; cursor: pointer; min-height: 34px; }
+.seg button[aria-pressed="true"] { background: var(--on-band); color: var(--band); font-weight: 600; }
+.filters label { display: inline-flex; gap: 6px; align-items: center; }
+.filters input[type="search"] { border: 0; border-radius: 999px; padding: 7px 14px; min-width: min(280px, 70vw); background: var(--surface); color: var(--ink); }
+main { padding: 18px clamp(16px, 4vw, 40px) 40px; }
+.note { color: var(--muted); margin: 0 0 12px; }
+.note.warn { background: var(--warn-bg); color: var(--warn); padding: 10px 14px; border-radius: var(--radius); }
+.wrap { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.t { min-width: 240px; max-width: 420px; }
+td.t a { font-weight: 600; text-decoration: none; }
+td.t a:hover { text-decoration: underline; }
+.sub { color: var(--muted); font-size: .8rem; margin-top: 2px; }
+.chip { display: inline-block; font-size: .72rem; padding: 1px 8px; border-radius: 999px; background: var(--accent-pale); color: var(--accent); margin-left: 6px; white-space: nowrap; }
+.chip.flag { background: var(--warn-bg); color: var(--warn); }
+.never { color: var(--mark); font-weight: 600; }
+td select { max-width: 170px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; background: var(--surface); }
+.act { border: 1px solid var(--accent); background: transparent; color: var(--accent); border-radius: 999px; padding: 5px 12px; cursor: pointer; white-space: nowrap; min-height: 32px; }
+.act:hover { background: var(--accent-pale); }
+.act:disabled { opacity: .5; cursor: default; }
+.more { margin-top: 14px; }
+@media (max-width: 760px) {
+  thead { display: none; }
+  table, tbody, tr, td { display: block; }
+  tr { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  td { border: 0; padding: 3px 12px; }
+  td[data-l]::before { content: attr(data-l) ": "; color: var(--muted); font-size: .8rem; }
+  td.t { max-width: none; }
+}
+@media (prefers-reduced-motion: no-preference) { .act, .seg button { transition: background .15s; } }
+</style>
+</head>
+<body>
+<header class="band">
+  <h1>Review list</h1>
+  <p>Every published resource in Wildflower Wisdom, the longest unreviewed first. Open one, fix what needs fixing, then mark it reviewed.</p>
+  <div class="filters">
+    <div class="seg" role="group" aria-label="Which resources">
+      <button type="button" id="all" aria-pressed="true">All documents</button>
+      <button type="button" id="mine" aria-pressed="false">Mine</button>
+    </div>
+    <label><input type="checkbox" id="flagged"> Flagged only</label>
+    <label><input type="checkbox" id="nosteward"> No steward</label>
+    <input type="search" id="q" placeholder="Filter by title, author or steward" aria-label="Filter by title, author or steward">
+  </div>
+</header>
+<main>
+  <p class="note" id="note" role="status">Loading the list.</p>
+  <div class="wrap" id="wrap" hidden>
+    <table>
+      <thead><tr><th>Resource</th><th>Author</th><th>Steward</th><th>Updated</th><th>Last reviewed</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <button type="button" class="act more" id="more" hidden></button>
+</main>
+<script>
+"use strict";
+// The connector is found by this exact name in the reader's Claude settings.
+const SERVER = "MyWildflower";
+const $ = id => document.getElementById(id);
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const fmtDate = s => s ? MONTHS[+s.slice(5, 7) - 1] + " " + s.slice(0, 4) : "";
+const TYPE_ONE = { guide: "Guide", template: "Template", example: "Example", policy: "Policy", training: "Training", directory: "Directory", data: "Data", news: "News", link: "Link", series: "Series", question: "Q&A", resource_list: "Resource list", other: "Other" };
+// How long ago, in the unit a person would say it in.
+function ago(s) {
+  const d = Math.floor((Date.now() - new Date(s + "T00:00:00Z").getTime()) / 86400000);
+  return d < 1 ? "Today" : d === 1 ? "Yesterday" : d < 60 ? d + " days ago" : d < 730 ? Math.round(d / 30.4) + " months ago" : (d / 365).toFixed(1).replace(/\.0$/, "") + " years ago";
+}
+
+const state = { mine: false, flagged: false, nosteward: false, q: "", shown: 100 };
+let mcp = null, rows = [], people = [];
+const call = (tool, input) => mcp.callTool(SERVER, tool, input, { cache: { refresh: true } }).then(r => r.payload);
+
+function explain(e) {
+  const code = e && e.code;
+  if (code === "server_not_connected" || code === "server_not_found") return "Add the " + SERVER + " connector in Claude, under Settings then Connectors, then reload this page.";
+  if (code === "needs_reauth") return "Your " + SERVER + " connection has expired. Reconnect it in Claude, under Settings then Connectors.";
+  if (code === "selection_required") return "You have more than one " + SERVER + " connector. Choose one when Claude asks, then reload.";
+  // A teacher leader's connection has no staff tools at all, which is how the server says this list is not theirs.
+  if (code === "tool_error" || code === "tool_not_found") return "This list is for Wildflower Foundation staff. " + ((e && e.message) || "").slice(0, 160);
+  if (code === "not_in_manifest" || code === "approval_required" || code === "consent_required" || code === "blocked_by_policy") return "This page has not been allowed to use your " + SERVER + " connector.";
+  return "Wildflower Wisdom did not answer. Reload to try again.";
+}
+function say(text, warn) { const n = $("note"); n.textContent = text; n.className = "note" + (warn ? " warn" : ""); n.hidden = !text; }
+
+function visible() {
+  const q = state.q.toLowerCase();
+  return rows.filter(r => (!state.mine || r.mine) && (!state.flagged || r.flags) && (!state.nosteward || !r.steward) &&
+    (!q || (r.title + " " + (r.author || "") + " " + (r.steward || "")).toLowerCase().includes(q)));
+}
+
+function render() {
+  const list = visible(), body = $("rows"); body.textContent = "";
+  $("all").textContent = "All documents (" + rows.length + ")";
+  $("mine").textContent = "Mine (" + rows.filter(r => r.mine).length + ")";
+  $("wrap").hidden = !list.length;
+  say(list.length ? list.length + (list.length === 1 ? " resource" : " resources") + ", longest unreviewed first." : rows.length ? "Nothing matches these filters." : "There is nothing in the library to review.", false);
+  list.slice(0, state.shown).forEach(r => {
+    const tr = el("tr");
+    const t = el("td", "t"); const a = el("a", null, r.title); a.href = r.link; a.target = "_blank"; a.rel = "noopener"; t.append(a);
+    t.append(el("span", "chip", TYPE_ONE[r.type] || "Other"));
+    if (r.flags) t.append(el("span", "chip flag", r.flags > 1 ? "Flagged ×" + r.flags : "Flagged"));
+    if (r.hidden) t.append(el("span", "chip", "Hidden"));
+    if (r.flag_note) t.append(el("div", "sub", "“" + r.flag_note + "”"));
+    if (r.on_the_map) t.append(el("div", "sub", r.on_the_map));
+    const au = el("td", null, r.author || "—"); au.dataset.l = "Author";
+    const st = el("td"); st.dataset.l = "Steward";
+    const sel = el("select"); sel.setAttribute("aria-label", "Steward for " + r.title);
+    sel.append(new Option("None", ""));
+    people.forEach(p => sel.append(new Option(p.name, p.email)));
+    // A steward who is not in the staff list (their role changed since) still shows, instead of reading as "None".
+    const cur = people.find(p => p.name === r.steward);
+    if (r.steward && !cur) sel.append(new Option(r.steward, "?"));
+    sel.value = r.steward ? (cur ? cur.email : "?") : "";
+    sel.onchange = async () => {
+      if (sel.value === "?") return;
+      sel.disabled = true;
+      try { const out = await call("staff_set_steward", { id: r.id, steward_email: sel.value || null }); r.steward = out.steward; }
+      catch (e) { say(explain(e), true); }
+      render();
+    };
+    st.append(sel);
+    const up = el("td", null, r.updated ? fmtDate(r.updated) : "—"); up.dataset.l = "Updated";
+    const rv = el("td"); rv.dataset.l = "Last reviewed";
+    if (r.last_reviewed) { rv.append(el("span", null, ago(r.last_reviewed))); rv.title = r.last_reviewed; if (r.reviewed_by) rv.append(el("div", "sub", r.reviewed_by)); }
+    else rv.append(el("span", "never", "Never"));
+    const ac = el("td"); const b = el("button", "act", "Mark reviewed"); b.type = "button";
+    b.onclick = async () => {
+      b.disabled = true; b.textContent = "Saving";
+      try { const out = await call("staff_mark_reviewed", { id: r.id }); r.last_reviewed = out.last_reviewed; r.reviewed_by = "You"; r.flags = 0; r.flag_note = null; }
+      catch (e) { say(explain(e), true); }
+      // The row stays where it is until the next load, so the list does not jump under the pointer.
+      render();
+    };
+    ac.append(b);
+    tr.append(t, au, st, up, rv, ac); body.append(tr);
+  });
+  const left = list.length - state.shown, more = $("more");
+  more.hidden = left <= 0; more.textContent = "Show " + Math.min(left, 200) + " more (" + left + " left)";
+}
+
+$("all").onclick = () => { state.mine = false; $("all").setAttribute("aria-pressed", "true"); $("mine").setAttribute("aria-pressed", "false"); state.shown = 100; render(); };
+$("mine").onclick = () => { state.mine = true; $("mine").setAttribute("aria-pressed", "true"); $("all").setAttribute("aria-pressed", "false"); state.shown = 100; render(); };
+$("flagged").onchange = e => { state.flagged = e.target.checked; state.shown = 100; render(); };
+$("nosteward").onchange = e => { state.nosteward = e.target.checked; state.shown = 100; render(); };
+$("q").oninput = e => { state.q = e.target.value.trim(); state.shown = 100; render(); };
+$("more").onclick = () => { state.shown += 200; render(); };
+
+(async () => {
+  try { mcp = window.claude ? await window.claude.use("mcp") : null; } catch (e) { mcp = null; }
+  if (!mcp) { say("The library is not available in this view. Open this page in Claude with the " + SERVER + " connector connected.", true); return; }
+  try {
+    const [list, staff] = await Promise.all([call("staff_review_list", { limit: 2000 }), call("staff_people", {})]);
+    rows = list.resources || []; people = staff.people || [];
+    render();
+  } catch (e) { say(explain(e), true); }
+})();
+</script>
+</body>
+</html>

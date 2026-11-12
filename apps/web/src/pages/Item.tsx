@@ -1,8 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, ExternalLink, Info, Pencil, ThumbsDown, ThumbsUp } from "lucide-react";
+import { Download, ExternalLink, Flag, Info, Pencil, ThumbsDown, ThumbsUp } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { ItemSummary } from "@wfw/shared";
+import { creditLine, type ItemSummary } from "@wfw/shared";
 import { api, fmtDate } from "../api";
 import { ErrorState, ItemGrid, Linkify, Loading, Pill, RegionTags } from "../components/ui";
 import { useMe } from "../me";
@@ -10,7 +10,7 @@ import { useMe } from "../me";
 type Attachment = { key: string; src: string; name: string; kind: string; bytes: number; mime: string | null; openUrl: string | null };
 type LinkedDoc = { url: string; kind: string; status: string };
 type Detail = {
-  item: ItemSummary & { authorName: string | null; publishedAt: string | null; categories: string[]; audiences: string[]; bodyHtml: string; primaryVideo: Attachment | null; attachments: Attachment[]; linkedDocs: LinkedDoc[]; contents: ItemSummary[]; seriesNav: { seriesId: string; seriesTitle: string; posts: { id: string; title: string; current: boolean }[] }[]; native: { kind: string | null; googleKind: string | null; googleFileId: string | null; status: string; author: { id: string; name: string } | null; imported: boolean } | null; importError: string | null };
+  item: ItemSummary & { authorName: string | null; reviewedAt: string | null; reviewedBy: string | null; flagged: boolean; publishedAt: string | null; categories: string[]; audiences: string[]; bodyHtml: string; primaryVideo: Attachment | null; attachments: Attachment[]; linkedDocs: LinkedDoc[]; contents: ItemSummary[]; seriesNav: { seriesId: string; seriesTitle: string; posts: { id: string; title: string; current: boolean }[] }[]; native: { kind: string | null; googleKind: string | null; googleFileId: string | null; status: string; author: { id: string; name: string } | null; imported: boolean } | null; importError: string | null };
   placements: { key: string; name: string; jobName: string; jobKey: string; isPrimary: boolean }[];
   votes: { yes: number; no: number; mine: string | null };
 };
@@ -54,11 +54,16 @@ function EmptyBody({ item }: { item: Detail["item"] }) {
 export function ItemPage() {
   const { id } = useParams(); const qc = useQueryClient(); const me = useMe();
   const q = useQuery({ queryKey: ["item", id], queryFn: () => api.get<Detail>(`/api/map/item/${id}`) });
+  // A flag carries an optional note, so the button opens a small box rather than firing at once.
+  const [flagging, setFlagging] = useState(false); const [flagNote, setFlagNote] = useState("");
+  const flag = useMutation({ mutationFn: () => api.post(`/api/flags/${id}`, { note: flagNote.trim() || null }), onSuccess: () => { setFlagging(false); setFlagNote(""); qc.invalidateQueries({ queryKey: ["item", id] }); } });
+  const reviewed = useMutation({ mutationFn: () => api.post(`/api/admin/review/${id}/reviewed`, {}), onSuccess: () => qc.invalidateQueries({ queryKey: ["item", id] }) });
   const vote = useMutation({ mutationFn: (kind: "helpful_yes" | "helpful_no") => api.post("/api/signals", { itemId: id, kind }), onSuccess: () => qc.invalidateQueries({ queryKey: ["item", id] }) });
   useEffect(() => { window.scrollTo(0, 0); }, [id]);
   if (q.isLoading) return <div className="wf-page"><Loading /></div>;
   if (q.error) return <div className="wf-page"><ErrorState error={q.error} retry={() => q.refetch()} /></div>;
   const { item, placements, votes } = q.data!;
+  const staff = me?.role === "staff";
   const primary = placements.find((p) => p.isPrimary) ?? placements[0];
   // Files already shown inside the body, and the video shown at the top, are not repeated below it.
   const rest = item.attachments.filter((a) => !item.bodyHtml.includes(`"${a.src}"`) && a.key !== item.primaryVideo?.key);
@@ -76,7 +81,7 @@ export function ItemPage() {
               than a Connected author, and the separator used to key off the Connected one only. */}
           <p className="muted" style={{ marginTop: 6 }}>
             {[
-              item.native?.author?.name ?? item.authorName ?? null,
+              creditLine(item.native?.author?.name ?? item.authorName ?? null, item.steward),
               item.publishedAt ? `Published ${fmtDate(item.publishedAt)}` : null,
               item.updatedAt && item.updatedAt !== item.publishedAt ? `updated ${fmtDate(item.updatedAt)}` : null,
             ].filter(Boolean).join(" · ")}
@@ -109,6 +114,18 @@ export function ItemPage() {
             <h3>Was this helpful?</h3>
             <div className="inline-actions"><button className={votes.mine === "helpful_yes" ? "primary-button" : ""} onClick={() => vote.mutate("helpful_yes")}><ThumbsUp size={16} /> Yes{votes.yes ? ` (${votes.yes})` : ""}</button><button className={votes.mine === "helpful_no" ? "primary-button" : ""} onClick={() => vote.mutate("helpful_no")}><ThumbsDown size={16} /> Not really{votes.no ? ` (${votes.no})` : ""}</button></div>
             <p className="muted" style={{ fontSize: ".8rem" }}>Votes feed the ranking so the best resources rise.</p>
+            <h3 style={{ marginTop: 16 }}>Out of date or unclear?</h3>
+            {item.flagged ? <p className="muted" style={{ fontSize: ".85rem" }}>You flagged this. Foundation staff will take a look.</p> : flagging ? (
+              <div style={{ display: "grid", gap: 8 }}>
+                <textarea rows={3} value={flagNote} onChange={(e) => setFlagNote(e.target.value)} placeholder="What looks wrong or out of date? (optional)" maxLength={1000} />
+                <div className="inline-actions"><button className="primary-button small" disabled={flag.isPending} onClick={() => flag.mutate()}>Send to staff</button><button className="small" onClick={() => setFlagging(false)}>Cancel</button></div>
+              </div>
+            ) : <button className="small" onClick={() => setFlagging(true)}><Flag size={14} /> Flag for review</button>}
+            {staff ? <>
+              <h3 style={{ marginTop: 16 }}>Review</h3>
+              <p className="muted" style={{ fontSize: ".85rem", marginBottom: 8 }}>{item.reviewedAt ? `Last reviewed ${fmtDate(item.reviewedAt)}${item.reviewedBy ? ` by ${item.reviewedBy.replace(/\s*<[^>]*>$/, "")}` : ""}` : "Never reviewed"}</p>
+              <div className="inline-actions"><button className="small" disabled={reviewed.isPending} onClick={() => reviewed.mutate()}>Mark as reviewed today</button><Link className="small" to="/admin/queues/review">Review list</Link></div>
+            </> : null}
             {item.seriesNav?.map((sn) => <div key={sn.seriesId} className="series-nav"><h3 style={{ marginTop: 16 }}>In this series: <Link to={`/item/${sn.seriesId}`}>{sn.seriesTitle}</Link></h3><ol>{sn.posts.map((p) => <li key={p.id} className={p.current ? "current" : ""} aria-current={p.current ? "page" : undefined}>{p.current ? <span>{p.title}</span> : <Link to={`/item/${p.id}`}>{p.title}</Link>}</li>)}</ol></div>)}
             <h3 style={{ marginTop: 16 }}>Where it lives on the map</h3>
             <ul className="wf-list tight" style={{ fontSize: ".875rem" }}>{placements.map((p) => <li key={p.key}><Link to={`/map/${p.key}`}>{p.jobName} › {p.name}</Link>{p.isPrimary ? <span className="muted"> (primary)</span> : null}</li>)}</ul>

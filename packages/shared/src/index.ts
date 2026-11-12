@@ -17,6 +17,10 @@ export const STAGES: { key: StageKey; name: string; description: string }[] = [
 export type Curation = "essential" | "recommended" | null;
 export interface ItemSummary {
   id: string; title: string; url: string; kind: "post" | "series" | "question";
+  /** Who wrote it, with staff's correction applied. Absent where a list has no use for it. */
+  author?: string | null;
+  /** Who looks after it now, when that is someone other than the author. */
+  steward?: string | null;
   description: string | null; summary: string | null; contentType: string | null;
   updatedAt: string | null; views: number; score: number; curation: Curation; dated: string | null;
   linkOnly: boolean; attachmentCount: number; seriesTitles: string[]; language: ItemLanguage; why?: string | null;
@@ -113,3 +117,27 @@ export const DOC_TYPES: { key: string; label: string }[] = [
   { key: "series", label: "Series" }, { key: "resource_list", label: "Resource lists" }, { key: "guide", label: "Guides" }, { key: "template", label: "Templates" }, { key: "example", label: "Examples" }, { key: "data", label: "Data" },
   { key: "training", label: "Training" }, { key: "directory", label: "Directories" }, { key: "policy", label: "Policies" }, { key: "news", label: "News" }, { key: "question", label: "Q&A" }, { key: "link", label: "Links" }, { key: "other", label: "Other" },
 ];
+
+/**
+ * The credit line for a resource. Someone who wrote a resource and has left is still its author; the
+ * steward is who to ask about it now. One name is shown plainly, two are told apart.
+ */
+export function creditLine(author: string | null | undefined, steward: string | null | undefined): string | null {
+  const a = author?.trim() || null, s = steward?.trim() || null;
+  if (!s || (a && a.toLowerCase() === s.toLowerCase())) return a;
+  return a ? `Originally created by ${a}; stewarded by ${s}` : `Stewarded by ${s}`;
+}
+/**
+ * Whether an author credit names this person. Credits are free text ("Sep Kamvar and Matt Kramer") and a
+ * sign-in name is whatever Google holds ("Matthew Kramer"), so equality misses real matches: the family
+ * name has to agree and one given name has to begin the other.
+ */
+export function creditNames(author: string | null | undefined, person: string): boolean {
+  const split = (n: string) => n.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const p = split(person); if (p.length < 2 || !author) return false;
+  return author.split(/,|&|\band\b/i).some((part) => {
+    const a = split(part); if (a.length < 2) return false;
+    const g1 = a[0]!, g2 = p[0]!;
+    return a[a.length - 1] === p[p.length - 1] && (g1.startsWith(g2.slice(0, 3)) || g2.startsWith(g1.slice(0, 3))) && Math.min(g1.length, g2.length) >= 3;
+  });
+}

@@ -131,6 +131,26 @@ stops and says so, and you can publish it linked to the original instead.
 picture in a document, in the Wisdom Drive under "Pictures in documents", and points the stored body at
 those, so a header image does not disappear a day later and survives the document being held.
 
+## Stewards, reviews and flags
+
+Much of the library was written by people who have since left Wildflower. Three things keep it right, and
+none of them runs on a schedule: staff work the list when they choose to.
+
+- **A steward** is the person who looks after a resource now. Set one where the author has left or moved
+  on. The author stays as written and both are shown: *Originally created by Sep Kamvar; stewarded by
+  Erin McKay*. A steward has to be a staff member who has signed in to Wisdom at least once, so that
+  "the resources I look after" means something.
+- **Reviewed** records the day someone last read a resource and decided it stands. Open the resource, fix
+  what needs fixing, then mark it reviewed. A retirement-queue decision counts as a review too.
+- **A flag** is a reader saying a resource looks out of date or unclear, with an optional note. Anyone
+  signed in can flag from the resource's page or from Claude. Flags stay open until the resource is marked
+  reviewed, which closes them.
+
+Where to do it: **Queues → Review list** on the site, or the review-list page in Claude, which is the same
+list. Both show every published resource, the longest unreviewed first, with a switch between all
+resources and the ones you wrote or steward. "Mine" matches your sign-in name against the author credit
+loosely (Matt Kramer is Matthew Kramer), so check a surprising match rather than trusting it.
+
 ## How to add a material type
 
 **Staff → Material types → Add a material type**. Give it a key (lowercase), a name, the job it belongs to, the "what good looks like" guide in Markdown (purpose, audience, must-have elements, common mistakes, tone, Wildflower-specific considerations), and a rubric of up to eight criteria with what a 5 looks like. Then open it to add reviewer notes and link Connected resources (searched from the index). Deactivate a type to hide it without deleting its history.
