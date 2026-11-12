@@ -58,7 +58,8 @@ h1, h2, h3 { font-family: var(--display); font-weight: 500; margin: 0; text-wrap
 
 main { display: grid; grid-template-columns: minmax(260px, 360px) minmax(0, 1fr); gap: 22px; padding: 22px clamp(16px, 3vw, 40px) 40px; max-width: 1500px; margin: 0 auto; align-items: start; }
 .jobs { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; display: flex; flex-direction: column; }
-.treebar { display: flex; justify-content: flex-end; gap: 12px; padding: 4px 8px 6px; font-size: .8rem; }
+.treebar { display: flex; align-items: baseline; gap: 12px; padding: 8px 8px 8px 10px; font-size: .8rem; }
+.treebar h2 { flex: 1; font-size: 1.4rem; color: var(--accent); line-height: 1.1; }
 .treebar button { border: 0; background: transparent; color: var(--accent); cursor: pointer; padding: 2px 0; text-decoration: underline; }
 .job { border-top: 1px solid var(--line); }
 .job:first-of-type { border-top: 0; }
@@ -70,7 +71,6 @@ main { display: grid; grid-template-columns: minmax(260px, 360px) minmax(0, 1fr)
 .job > summary:hover { background: var(--accent-pale); }
 .job .name { flex: 1; font-family: var(--display); font-weight: 500; font-size: 1.12rem; color: var(--accent); line-height: 1.2; text-wrap: balance; }
 .job .total { font-variant-numeric: tabular-nums; color: var(--muted); font-size: .8rem; white-space: nowrap; }
-.job .about { margin: 0 8px 4px 22px; color: var(--muted); font-size: .84rem; }
 .subs { list-style: none; margin: 0 0 6px 16px; padding: 0 0 0 6px; border-left: 1px solid var(--line); display: flex; flex-direction: column; }
 .subs button { width: 100%; display: flex; justify-content: space-between; gap: 10px; align-items: baseline; text-align: left; border: 0; background: transparent; border-radius: 7px; padding: 6px; cursor: pointer; }
 .subs button:hover { background: var(--accent-pale); }
@@ -255,7 +255,7 @@ const saveOpen = () => { try { localStorage.setItem(OPEN_KEY, JSON.stringify([..
 function renderJobs(jobs) {
   const box = $("jobs"); box.textContent = "";
   const bar = el("div", "treebar");
-  bar.append(button(null, "Open all", () => { openJobs = new Set(jobs.map(j => j.key)); saveOpen(); renderJobs(jobs); }), button(null, "Close all", () => { openJobs = new Set(); saveOpen(); renderJobs(jobs); }));
+  bar.append(el("h2", null, "Jobs"), button(null, "Open all", () => { openJobs = new Set(jobs.map(j => j.key)); saveOpen(); renderJobs(jobs); }), button(null, "Close all", () => { openJobs = new Set(); saveOpen(); renderJobs(jobs); }));
   box.append(bar);
   jobs.forEach(j => {
     const total = j.subs.reduce((n, s) => n + s.count, 0);
@@ -267,7 +267,6 @@ function renderJobs(jobs) {
     node.append(head);
     node.addEventListener("toggle", () => { if (node.open) openJobs.add(j.key); else openJobs.delete(j.key); saveOpen(); });
     if (j.staff) node.append(el("p", "staffonly", "Staff only"));
-    if (j.desc) node.append(el("p", "about", j.desc));
     const ul = el("ul", "subs");
     j.subs.forEach(s => {
       const li = el("li"), b = el("button", s.dim ? "zero" : ""); b.type = "button";
